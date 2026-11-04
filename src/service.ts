@@ -146,7 +146,15 @@ export const schemas = {
     value: z.string().min(1).describe("Company name, handle/profile URL, or domain"),
     kind: z.enum(BLOCK_KINDS).optional().describe("Inferred when omitted"),
     label: z.string().optional().describe("e.g. the competitor's product name"),
-    match: z.enum(["exact", "fuzzy"]).optional().describe("Name entries: exact = only the exact full company name; fuzzy = whole-word match inside company names and exact person names. Default exact for single words of <=7 chars, else fuzzy"),
+    match: z.enum(["exact", "fuzzy"]).optional().describe("Name entries only. exact = a person or company name equal to the full name (legal suffixes like Inc/Ltd/Labs/AI ignored on both sides); fuzzy = exact plus the full name as whole words inside a company name (never just part of it). Default: exact for single words of <=7 chars, else fuzzy"),
+    idempotency_key: idem,
+    reason: reasonField,
+  }),
+  update_competitor: z.object({
+    id: z.string(),
+    value: z.string().min(1).optional().describe("New full name/handle/domain (re-normalized; display name stored as given)"),
+    match: z.enum(["exact", "fuzzy"]).optional().describe("exact | fuzzy (see add_competitor)"),
+    label: z.string().optional(),
     idempotency_key: idem,
     reason: reasonField,
   }),
@@ -711,8 +719,34 @@ export class CrmService {
     return this.idempotent("add_competitor", i, async () => {
       const n = normalizeBlockValue(i.kind, i.value);
       if (!n) throw new CrmError("invalid", `could not normalize ${JSON.stringify(i.value)}`);
-      const entry = await this.repo.insertBlock(n.kind, n.value, i.label ?? i.value, i.match ?? defaultMatchMode(n.kind, n.value, i.value));
-      await this.repo.appendActivity({ action: "blocklist.added", entityType: "blocklist", entityId: entry.id, reason: i.reason, payload: n });
+      const entry = await this.repo.insertBlock(n.kind, n.value, i.label ?? i.value, i.match ?? defaultMatchMode(n.kind, n.value, i.value), i.value.trim());
+      await this.repo.appendActivity({ action: "blocklist.added", entityType: "blocklist", entityId: entry.id, reason: i.reason, payload: { ...n, input: i.value, match: entry.match } });
+      return entry;
+    });
+  }
+
+  async update_competitor(raw: Input<"update_competitor">) {
+    const i = schemas.update_competitor.parse(raw);
+    requireRole(this.ctx, "admin");
+    return this.idempotent("update_competitor", i, async () => {
+      const cur = await this.repo.blockById(i.id);
+      if (!cur) throw new CrmError("not_found", `blocklist entry ${i.id} not found`);
+      const patch: Parameters<typeof this.repo.updateBlock>[1] = {};
+      if (i.value !== undefined) {
+        const n = normalizeBlockValue(cur.kind, i.value);
+        if (!n) throw new CrmError("invalid", `could not normalize ${JSON.stringify(i.value)}`);
+        const dup = (await this.repo.blocklistAll()).find((e) => e.kind === n.kind && e.value === n.value && e.id !== cur.id);
+        if (dup) throw new CrmError("conflict", `entry ${dup.id} already has value ${n.value}`);
+        patch.value = n.value;
+        patch.displayName = i.value.trim();
+      }
+      if (i.match) patch.match = i.match;
+      if (i.label !== undefined) patch.label = i.label;
+      const entry = await this.repo.updateBlock(cur.id, patch);
+      await this.repo.appendActivity({
+        action: "blocklist.updated", entityType: "blocklist", entityId: cur.id, reason: i.reason,
+        payload: { before: { value: cur.value, display_name: cur.displayName, match: cur.match, label: cur.label }, after: patch },
+      });
       return entry;
     });
   }
@@ -1398,7 +1432,8 @@ export const TOOL_DESCRIPTIONS: Record<keyof typeof schemas, string> = {
   pipeline_summary: "Counts of contacts per overall stage and number of due tasks.",
   find_existing: "Have we seen this person? Looks up by any identity (email, X, LinkedIn, Reddit, GitHub, or `identity` = any of them) or company domain, plus fuzzy name(+company) candidates with the match reason. Also reports competitor matches. Call before creating a lead.",
   is_competitor: "Check a name/company/handle/domain/email (or an existing contact) against the competitor blocklist.",
-  add_competitor: "Add a competitor to the blocklist (company name, handle/profile URL, or domain; kind inferred if omitted).",
+  add_competitor: "Add a competitor to the blocklist (company name, handle/profile URL, or domain; kind inferred if omitted). The full name is kept as given (display_name) with a normalized key for matching. Name entries take match: exact|fuzzy: exact = a lead's name or company equals the full name (legal suffixes ignored); fuzzy = also the full name as whole words inside a company name.",
+  update_competitor: "Edit a blocklist entry by id: restore its full name (value), switch match exact|fuzzy, or change the label. Admin only; logged in activity.",
   remove_competitor: "Remove a blocklist entry by id.",
   purge_competitors: "Bulk-delete blocklist entries by ids and/or a case-insensitive value_regex (optionally filtered by kind). dry_run defaults to true and lists matches; set dry_run=false to delete. Admin only.",
   list_competitors: "List the competitor blocklist.",
@@ -1418,9 +1453,9 @@ export const TOOL_DESCRIPTIONS: Record<keyof typeof schemas, string> = {
   export_csv: "Export contacts as CSV (import columns first, then ids, identities and per-channel stage/follow-up).",
 };
 /** Tools that need admin (or owner) on top of crm:write. */
-export const ADMIN_CRM_TOOLS = new Set<string>(["add_competitor", "remove_competitor", "purge_competitors", "upsert_campaign"]);
+export const ADMIN_CRM_TOOLS = new Set<string>(["add_competitor", "update_competitor", "remove_competitor", "purge_competitors", "upsert_campaign"]);
 export const TOOL_NAMES = Object.keys(schemas) as (keyof typeof schemas)[];
 export const WRITE_TOOLS = new Set<keyof typeof schemas>([
   "upsert_contact", "upsert_company", "log_touch", "update_stage", "create_task", "complete_task", "add_note",
-  "add_competitor", "remove_competitor", "purge_competitors", "set_channel_state", "create_draft", "transition_draft", "upsert_campaign", "import_leads_csv",
+  "add_competitor", "update_competitor", "remove_competitor", "purge_competitors", "set_channel_state", "create_draft", "transition_draft", "upsert_campaign", "import_leads_csv",
 ]);

@@ -1,5 +1,5 @@
 import type { BLOCK_KINDS, DraftState, Stage } from "./db/schema";
-import { isRedditRef, normalizeDomain, normalizeGithub, normalizeLinkedin, normalizeName, normalizeRedditUser, normalizeXHandle } from "./normalize";
+import { isRedditRef, normalizeDomain, normalizeGithub, nameKey, normalizeLinkedin, normalizeName, normalizeRedditUser, normalizeXHandle } from "./normalize";
 
 /** Progress order. lost / do_not_contact are terminal and ranked separately. */
 const ORDER: Stage[] = ["new", "qualified", "drafted", "contacted", "connection_pending", "connected", "responded", "call_booked", "pilot", "paying"];
@@ -42,7 +42,7 @@ export function normalizeBlockValue(kind: BlockKind | undefined, raw: string): {
   const v = raw.trim();
   if (!v) return null;
   const k: BlockKind = kind ?? (v.startsWith("@") || isRedditRef(v) || /^(https?:\/\/)?(www\.)?(x|twitter|github|reddit|linkedin)\.com\//i.test(v) ? "handle" : /^[^\s@]+\.[a-z]{2,}(\/.*)?$/i.test(v.replace(/^https?:\/\//, "")) ? "domain" : "name");
-  const value = k === "domain" ? normalizeDomain(v) : k === "handle" ? normalizeHandle(v) : normalizeName(v);
+  const value = k === "domain" ? normalizeDomain(v) : k === "handle" ? normalizeHandle(v) : nameKey(v);
   return value ? { kind: k, value } : null;
 }
 
@@ -57,6 +57,7 @@ export interface BlockEntry {
   kind: BlockKind;
   value: string;
   label: string | null;
+  displayName?: string | null;
   match?: MatchMode | null;
 }
 export type MatchMode = "exact" | "fuzzy";
@@ -66,10 +67,19 @@ export function defaultMatchMode(kind: BlockKind, value: string, raw: string = v
   return kind === "name" && /^[a-z0-9]{1,7}$/.test(value) && /^[A-Za-z0-9]{1,7}$/.test(raw.trim()) ? "exact" : "fuzzy";
 }
 
-/** Person names must match exactly; company names match on whole words; domains match incl. subdomains. */
+const keyed = (xs: string[]) => xs.map((x) => ({ full: nameKey(x), stripped: normalizeName(x) })).filter((x) => x.full);
+
+/**
+ * Name entries store the full normalized key (suffixes kept). Matching:
+ * - exact: a person OR company name equal to the entry, either as full keys or after legal-suffix stripping
+ *   on both sides (Station == "Station Labs Ltd"; "John Station" never matches).
+ * - fuzzy: exact rule above, plus the entry's FULL key appearing as whole words inside a company name
+ *   ("concord ai" matches "Concord AI Platform", never "Concord Health"). Never broader than the full name.
+ * Handles match exactly; domains match incl. subdomains.
+ */
 export function matchBlocklist(entries: BlockEntry[], p: Probe) {
-  const persons = p.personNames.map(normalizeName).filter(Boolean);
-  const companies = p.companyNames.map(normalizeName).filter(Boolean);
+  const persons = keyed(p.personNames);
+  const companies = keyed(p.companyNames);
   const handles = p.handles.map((h) => h.toLowerCase()).filter(Boolean);
   const domains = p.domains.map((d) => normalizeDomain(d)).filter((d): d is string => !!d);
   const hits: { entry: BlockEntry; matched_on: string }[] = [];
@@ -77,8 +87,14 @@ export function matchBlocklist(entries: BlockEntry[], p: Probe) {
     let on: string | undefined;
     if (e.kind === "domain") on = domains.find((d) => d === e.value || d.endsWith(`.${e.value}`));
     else if (e.kind === "handle") on = handles.find((h) => h === e.value);
-    else if ((e.match ?? defaultMatchMode(e.kind, e.value)) === "exact") on = companies.find((c) => c === e.value);
-    else on = persons.find((n) => n === e.value) ?? companies.find((c) => c === e.value || ` ${c} `.includes(` ${e.value} `));
+    else {
+      const full = nameKey(e.value);
+      const stripped = normalizeName(e.value);
+      const eq = (x: { full: string; stripped: string }) => x.full === full || (!!stripped && x.stripped === stripped);
+      const hit = persons.find(eq) ?? companies.find(eq) ??
+        ((e.match ?? defaultMatchMode(e.kind, e.value)) === "fuzzy" ? companies.find((c) => ` ${c.full} `.includes(` ${full} `)) : undefined);
+      on = hit?.full;
+    }
     if (on) hits.push({ entry: e, matched_on: `${e.kind}:${on}` });
   }
   return hits;

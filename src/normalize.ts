@@ -67,6 +67,17 @@ export function normalizeGithub(input?: string | null): string | null {
   return /^[A-Za-z0-9-]{1,39}$/.test(h) && !["orgs", "sponsors", "topics", "features"].includes(h.toLowerCase()) ? h.toLowerCase() : null;
 }
 
+/** Full matching key: lowercase, strip accents/punctuation, collapse spaces. Keeps suffixes (Concord AI -> "concord ai"). */
+export function nameKey(input?: string | null): string {
+  return (input ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 /** Lowercase, strip accents/punctuation and legal suffixes, collapse spaces. */
 export function normalizeName(input?: string | null): string {
   return (input ?? "")

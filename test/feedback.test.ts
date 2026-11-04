@@ -76,9 +76,10 @@ describe("sales outbound dry-run feedback", () => {
     const entries = await svc.list_competitors();
     const probe = (company: string, person = "") => matchBlocklist(entries, { personNames: [person], companyNames: [company], handles: [], domains: [] }).map((h) => h.entry.value);
     expect(probe("Station")).toEqual(["station"]);
-    expect(probe("Gas Station Labs", "Station")).toEqual([]);
+    expect(probe("Gas Station Labs", "John Station")).toEqual([]);
     expect(probe("Coral Reef Co")).toEqual(["coral"]);
-    expect(probe("Big Factory Shop")).toEqual(["factory"]);
+    expect(probe("Big Factory Shop")).toEqual([]);
+    expect(probe("Big Factory AI Shop")).toEqual(["factory ai"]);
   });
 
   it("purge_competitors lists then deletes by regex", async () => {

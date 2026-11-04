@@ -44,7 +44,7 @@ request ─► Hono (src/index.ts)
   |---|---|---|---|---|
   | read CRM, `get_org_usage`, `list_members` | ✓ | ✓ | ✓ | ✓ |
   | CRM writes (contacts, touches, drafts, tasks, imports) | | ✓ | ✓ | ✓ |
-  | blocklist (`add/remove/purge_competitor(s)`), `upsert_campaign`, members, invites, API keys | | | ✓ | ✓ |
+  | blocklist (`add/update/remove/purge_competitor(s)`), `upsert_campaign`, members, invites, API keys | | | ✓ | ✓ |
   | `transfer_ownership`, `set_seat_limit`, `delete_org` | | | | ✓ |
 
   Admins can't grant above their own role, touch owners, or grant owner. The last owner can't be removed or demoted.
@@ -65,7 +65,7 @@ different input returns `conflict`. The CRM **never sends anything**; it records
 |---|---|
 | Contacts and companies | `search_contacts`, `get_contact`, `upsert_contact`, `upsert_company`, `find_existing`, `list_contacts`, `add_note`, `get_activity` |
 | Channel state and reminders | `set_channel_state`, `log_touch`, `update_stage`, `due_followups`, `stale_no_response`, `linkedin_needs_first_message`, `list_due_followups`, `create_task`, `complete_task` |
-| Competitors | `is_competitor`, `add_competitor` (`match: exact\|fuzzy`), `remove_competitor`, `purge_competitors` (ids / `value_regex`, `dry_run` defaults to true), `list_competitors` |
+| Competitors | `is_competitor`, `add_competitor` (`match: exact\|fuzzy`), `update_competitor` (`value` / `match` / `label`), `remove_competitor`, `purge_competitors` (ids / `value_regex`, `dry_run` defaults to true), `list_competitors` |
 | Drafts and campaigns | `create_draft`, `transition_draft`, `list_drafts`, `upsert_campaign`, `list_campaigns` |
 | Pacing and reporting | `x_pacing_today`, `outreach_report`, `pipeline_summary` |
 | CSV | `import_leads_csv` (dry run by default), `export_csv` |
@@ -88,9 +88,13 @@ follow-up. **Reminders** are the per-channel `next_followup_at`, read through `d
 Migration 0002 maps v1 stages: replied→responded, meeting→call_booked, won→paying.
 
 ### Competitor matching
-Name entries carry `match`: `exact` matches only the exact full (normalized) company name; `fuzzy` also
-matches the name as whole words inside a company name and exact person names. Single words of up to 7
-characters (Station, Coral, Axis, Spawn...) default to `exact`; pass `match` to override. Handles and
+Name entries keep the full name as given in `display_name` (e.g. `Orchestrator.inc`, `Concord AI`) and a
+normalized key in `value` (`orchestrator inc`, `concord ai`); legal suffixes (Inc/Ltd/LLC/GmbH/Labs/AI/IO...)
+are only ignored at match time. `match: exact` hits when a lead's person name OR company name equals the
+full name (suffixes ignored on both sides: `Station Labs Ltd` = `Station`; `John Station` never matches).
+`match: fuzzy` adds the full key as whole words inside a company name (`concord ai` matches `Concord AI
+Platform`, never `Concord Health`). Single words of up to 7 characters default to `exact`; pass `match` to
+override, or change it later with `update_competitor` (admin; also restores a full name via `value`). Handles and
 domains always match exactly (domains include subdomains). `u/name`, `/u/name` and `reddit.com/user/name`
 are Reddit handles, never names or X handles.
 

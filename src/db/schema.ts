@@ -278,6 +278,8 @@ export const blocklist = sqliteTable(
     kind: text("kind", { enum: BLOCK_KINDS }).notNull(),
     value: text("value").notNull(),
     label: text("label"),
+    /** Full name as given (e.g. "Orchestrator.inc"); value is the normalized matching key. */
+    displayName: text("display_name"),
     match: text("match", { enum: MATCH_MODES }).notNull().default("fuzzy"),
     createdAt: createdAt(),
   },
