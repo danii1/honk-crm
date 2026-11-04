@@ -1,5 +1,5 @@
 import type { BLOCK_KINDS, DraftState, Stage } from "./db/schema";
-import { isRedditRef, normalizeDomain, normalizeGithub, nameKey, normalizeLinkedin, normalizeName, normalizeRedditUser, normalizeXHandle } from "./normalize";
+import { isRedditRef, isThreadsRef, normalizeThreadsHandle, normalizeDomain, normalizeGithub, nameKey, normalizeLinkedin, normalizeName, normalizeRedditUser, normalizeXHandle } from "./normalize";
 
 /** Progress order. lost / do_not_contact are terminal and ranked separately. */
 const ORDER: Stage[] = ["new", "qualified", "drafted", "contacted", "connection_pending", "connected", "responded", "call_booked", "pilot", "paying"];
@@ -34,6 +34,7 @@ export const DRAFT_TRANSITIONS: Record<DraftState, DraftState[]> = {
 export type BlockKind = (typeof BLOCK_KINDS)[number];
 
 export function normalizeHandle(v: string): string {
+  if (isThreadsRef(v)) return normalizeThreadsHandle(v) ?? v.trim().toLowerCase();
   if (isRedditRef(v)) return normalizeRedditUser(v.replace(/^@/, "")) ?? v.trim().toLowerCase();
   return normalizeXHandle(v) ?? normalizeGithub(v) ?? normalizeRedditUser(v) ?? (normalizeLinkedin(v)?.split("/").pop() || v.trim().replace(/^@/, "").toLowerCase());
 }

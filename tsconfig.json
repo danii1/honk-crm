@@ -9,6 +9,8 @@
     "noUncheckedIndexedAccess": true,
     "skipLibCheck": true,
     "noEmit": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "hono/jsx",
     "isolatedModules": true,
     "verbatimModuleSyntax": false
   },

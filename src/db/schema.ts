@@ -23,9 +23,9 @@ export const STAGES = [
   "responded", "call_booked", "pilot", "paying", "lost", "do_not_contact",
 ] as const;
 /** Channels with per-contact state. */
-export const OUTREACH_CHANNELS = ["x", "linkedin", "reddit", "email"] as const;
-export const CHANNELS = ["email", "linkedin", "x", "reddit", "other"] as const;
-export const SOURCES = ["x", "linkedin", "reddit", "web", "prowlo", "email"] as const;
+export const OUTREACH_CHANNELS = ["x", "linkedin", "reddit", "email", "threads"] as const;
+export const CHANNELS = ["email", "linkedin", "x", "reddit", "threads", "other"] as const;
+export const SOURCES = ["x", "linkedin", "reddit", "web", "prowlo", "email", "threads"] as const;
 export const MATCH_MODES = ["exact", "fuzzy"] as const;
 export const CONTACT_TYPES = ["lead", "competitor"] as const;
 export const DRAFT_STATES = ["drafted", "approved", "sent", "discarded"] as const;
@@ -95,6 +95,7 @@ export const contacts = sqliteTable(
     xHandle: text("x"), // normalized: lowercase, no @
     redditUser: text("reddit_user"), // normalized: lowercase, no u/
     github: text("github"), // normalized: lowercase login
+    threadsHandle: text("threads_handle"), // normalized: lowercase, no @ (threads.net / threads.com)
     companyId: text("company_id").references(() => companies.id, { onDelete: "set null" }),
     sequenceId: text("sequence_id").references(() => sequences.id, { onDelete: "set null" }),
     campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
@@ -126,6 +127,7 @@ export const contacts = sqliteTable(
     uniqueIndex("contacts_org_x_uq").on(t.orgId, t.xHandle),
     uniqueIndex("contacts_org_reddit_uq").on(t.orgId, t.redditUser),
     uniqueIndex("contacts_org_github_uq").on(t.orgId, t.github),
+    uniqueIndex("contacts_org_threads_uq").on(t.orgId, t.threadsHandle),
     index("contacts_org_source_idx").on(t.orgId, t.source),
     index("contacts_org_campaign_idx").on(t.orgId, t.campaignId),
     index("contacts_org_company_idx").on(t.orgId, t.companyId),
@@ -148,6 +150,8 @@ export const outreachTouches = sqliteTable(
     subject: text("subject"),
     body: text("body"),
     externalId: text("external_id"),
+    externalUrl: text("external_url"),
+    threadId: text("thread_id"), // tweet conversation/status id, gmail threadId, reddit post id
     sentAt: integer("sent_at", { mode: "timestamp_ms" }),
     repliedAt: integer("replied_at", { mode: "timestamp_ms" }),
     createdAt: createdAt(),
@@ -155,6 +159,7 @@ export const outreachTouches = sqliteTable(
   (t) => [
     index("touches_org_contact_idx").on(t.orgId, t.contactId),
     uniqueIndex("touches_org_channel_external_uq").on(t.orgId, t.channel, t.externalId),
+    index("touches_org_channel_thread_idx").on(t.orgId, t.channel, t.threadId),
   ],
 );
 
@@ -302,12 +307,53 @@ export const drafts = sqliteTable(
     state: text("state", { enum: DRAFT_STATES }).notNull().default("drafted"),
     stateChangedAt: integer("state_changed_at", { mode: "timestamp_ms" }),
     sentAt: integer("sent_at", { mode: "timestamp_ms" }),
+    externalId: text("external_id"), // id of the sent message (tweet id, gmail message id...)
+    externalUrl: text("external_url"),
+    threadId: text("thread_id"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [
+    index("drafts_org_channel_thread_idx").on(t.orgId, t.channel, t.threadId),
+    index("drafts_org_external_idx").on(t.orgId, t.externalId),
     index("drafts_org_state_idx").on(t.orgId, t.state),
     index("drafts_org_contact_idx").on(t.orgId, t.contactId),
     index("drafts_org_channel_created_idx").on(t.orgId, t.channel, t.createdAt),
   ],
 );
+
+export const EVENT_TYPES = ["reply_received", "connection_accepted", "email_reply", "meeting_booked", "connection_requested"] as const;
+export type EventType = (typeof EVENT_TYPES)[number];
+
+/** Inbound/outbound pipeline events from automation; deduped per org+channel+type+external_id. */
+export const events = sqliteTable(
+  "events",
+  {
+    id: id(),
+    orgId: orgId(),
+    contactId: text("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    channel: text("channel", { enum: OUTREACH_CHANNELS }).notNull(),
+    type: text("type", { enum: EVENT_TYPES }).notNull(),
+    externalId: text("external_id").notNull(),
+    threadId: text("thread_id"),
+    summary: text("summary"),
+    occurredAt: integer("occurred_at", { mode: "timestamp_ms" }).notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("events_org_channel_type_external_uq").on(t.orgId, t.channel, t.type, t.externalId),
+    index("events_org_channel_thread_idx").on(t.orgId, t.channel, t.threadId),
+    index("events_org_occurred_idx").on(t.orgId, t.occurredAt),
+  ],
+);
+
+/** Per-org settings (follow-up / stale rules). */
+export const orgSettings = sqliteTable("org_settings", {
+  orgId: text("org_id")
+    .primaryKey()
+    .references(() => organization.id, { onDelete: "cascade" }),
+  followupRules: text("followup_rules", { mode: "json" }).$type<{ followup_days?: Partial<Record<OutreachChannel, number>>; stale_days?: Partial<Record<OutreachChannel, number>> }>(),
+  updatedAt: updatedAt(),
+});

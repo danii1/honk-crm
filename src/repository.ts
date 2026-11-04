@@ -59,13 +59,14 @@ export class Repository {
       where: and(eq(s.contacts.orgId, this.orgId), eq(s.contacts.email, email)),
     });
   }
-  async contactsByIdentity(ids: { email?: string | null; linkedin?: string | null; xHandle?: string | null; redditUser?: string | null; github?: string | null }) {
+  async contactsByIdentity(ids: { email?: string | null; linkedin?: string | null; xHandle?: string | null; redditUser?: string | null; github?: string | null; threadsHandle?: string | null }) {
     const c = s.contacts;
     const ors = [
       ids.email ? eq(c.email, ids.email) : undefined,
       ids.linkedin ? eq(c.linkedin, ids.linkedin) : undefined,
       ids.xHandle ? eq(c.xHandle, ids.xHandle) : undefined,
       ids.redditUser ? eq(c.redditUser, ids.redditUser) : undefined,
+      ids.threadsHandle ? eq(c.threadsHandle, ids.threadsHandle) : undefined,
       ids.github ? eq(c.github, ids.github) : undefined,
     ].filter((x): x is SQL => !!x);
     if (!ors.length) return [];
@@ -141,6 +142,7 @@ export class Repository {
           like(s.contacts.xHandle, p),
           like(s.contacts.github, p),
           like(s.contacts.redditUser, p),
+          like(s.contacts.threadsHandle, p),
           like(s.contacts.linkedin, p),
           inArray(
             s.contacts.companyId,
@@ -470,5 +472,78 @@ export class Repository {
     const d = s.drafts;
     const rows = await this.db.selectDistinct({ id: d.contactId }).from(d).where(and(eq(d.orgId, this.orgId), eq(d.channel, channel), eq(d.state, "sent")));
     return new Set(rows.map((r) => r.id));
+  }
+
+  // ---- automation: draft lookup, events, threads, settings
+  async draftsByIntentUrl(url: string) {
+    const d = s.drafts;
+    return this.db.select().from(d).where(and(eq(d.orgId, this.orgId), eq(d.intentUrl, url))).orderBy(desc(d.createdAt));
+  }
+  /** Drafts whose sent external id equals `id`, or whose intent URL mentions it (e.g. in_reply_to=<tweet id>). */
+  async draftsByExternalRef(id: string) {
+    const d = s.drafts;
+    return this.db
+      .select()
+      .from(d)
+      .where(and(eq(d.orgId, this.orgId), or(eq(d.externalId, id), eq(d.threadId, id), like(d.intentUrl, `%${id.replace(/[%_]/g, "")}%`))))
+      .orderBy(desc(d.createdAt));
+  }
+  async allDrafts() {
+    return this.db.select().from(s.drafts).where(eq(s.drafts.orgId, this.orgId));
+  }
+  async eventByKey(channel: s.OutreachChannel, type: s.EventType, externalId: string) {
+    const e = s.events;
+    return this.db.query.events.findFirst({ where: and(eq(e.orgId, this.orgId), eq(e.channel, channel), eq(e.type, type), eq(e.externalId, externalId)) });
+  }
+  async insertEvent(v: Omit<typeof s.events.$inferInsert, "orgId" | "id">) {
+    const [row] = await this.db.insert(s.events).values({ ...v, orgId: this.orgId }).returning();
+    return row!;
+  }
+  async eventsSince(since: Date) {
+    const e = s.events;
+    return this.db.select().from(e).where(and(eq(e.orgId, this.orgId), gte(e.occurredAt, since))).orderBy(desc(e.occurredAt));
+  }
+  async eventsForContact(contactId: string, limit = 100) {
+    const e = s.events;
+    return this.db.select().from(e).where(and(eq(e.orgId, this.orgId), eq(e.contactId, contactId))).orderBy(desc(e.occurredAt)).limit(limit);
+  }
+  /** Contact ids that own a thread on a channel, via touches, drafts or events (newest first). */
+  async contactIdsByThread(channel: s.OutreachChannel, threadId: string) {
+    const t = s.outreachTouches, d = s.drafts, e = s.events;
+    const [a, b, c] = await Promise.all([
+      this.db.select({ id: t.contactId, at: t.createdAt, src: sql<string>`'touch'` }).from(t).where(and(eq(t.orgId, this.orgId), eq(t.channel, channel), or(eq(t.threadId, threadId), eq(t.externalId, threadId)))),
+      this.db.select({ id: d.contactId, at: d.createdAt, src: sql<string>`'draft'` }).from(d).where(and(eq(d.orgId, this.orgId), eq(d.channel, channel), or(eq(d.threadId, threadId), eq(d.externalId, threadId)))),
+      this.db.select({ id: e.contactId, at: e.createdAt, src: sql<string>`'event'` }).from(e).where(and(eq(e.orgId, this.orgId), eq(e.channel, channel), or(eq(e.threadId, threadId), eq(e.externalId, threadId)))),
+    ]);
+    return [...a, ...b, ...c].toSorted((x, y) => y.at.getTime() - x.at.getTime());
+  }
+  async getSettings() {
+    return this.db.query.orgSettings.findFirst({ where: eq(s.orgSettings.orgId, this.orgId) });
+  }
+  async setFollowupRules(rules: NonNullable<(typeof s.orgSettings.$inferInsert)["followupRules"]>) {
+    await this.db
+      .insert(s.orgSettings)
+      .values({ orgId: this.orgId, followupRules: rules })
+      .onConflictDoUpdate({ target: s.orgSettings.orgId, set: { followupRules: rules, updatedAt: new Date() } });
+    return (await this.getSettings())!;
+  }
+  /** Latest occurrence per contact of an event type on a channel. */
+  async eventTimes(channel: s.OutreachChannel, type: s.EventType) {
+    const e = s.events;
+    const rows = await this.db.select({ id: e.contactId, at: e.occurredAt }).from(e).where(and(eq(e.orgId, this.orgId), eq(e.channel, channel), eq(e.type, type)));
+    const m = new Map<string, Date>();
+    for (const r of rows) if (!m.has(r.id) || m.get(r.id)! < r.at) m.set(r.id, r.at);
+    return m;
+  }
+  /** Send times per contact from outbound sent touches and sent drafts on a channel. */
+  async outboundSends(channel: s.OutreachChannel) {
+    const t = s.outreachTouches, d = s.drafts;
+    const [a, b] = await Promise.all([
+      this.db.select({ id: t.contactId, at: t.sentAt }).from(t).where(and(eq(t.orgId, this.orgId), eq(t.channel, channel), eq(t.direction, "outbound"), eq(t.status, "sent"))),
+      this.db.select({ id: d.contactId, at: d.sentAt }).from(d).where(and(eq(d.orgId, this.orgId), eq(d.channel, channel), eq(d.state, "sent"))),
+    ]);
+    const m = new Map<string, Date[]>();
+    for (const r of [...a, ...b]) if (r.at) m.set(r.id, [...(m.get(r.id) ?? []), r.at]);
+    return m;
   }
 }

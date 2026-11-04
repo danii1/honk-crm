@@ -59,6 +59,18 @@ export function normalizeRedditUser(input?: string | null): string | null {
   return /^[A-Za-z0-9_-]{3,20}$/.test(h) ? h.toLowerCase() : null;
 }
 
+/** True for threads.net/@name or threads.com/@name URLs (or "threads:" prefixed values). */
+export const isThreadsRef = (v?: string | null) => !!v && /^((https?:\/\/)?(www\.)?threads\.(net|com)\/@?|threads\s*:)/i.test(v.trim());
+
+/** Threads (Meta) handle = Instagram username: lowercase, no @, [a-z0-9._]{1,30}. */
+export function normalizeThreadsHandle(input?: string | null): string | null {
+  if (!input?.trim()) return null;
+  const b = bare(input.trim().replace(/^threads\s*:\s*/i, ""));
+  const m = b.match(/^threads\.(?:net|com)\/@?([A-Za-z0-9._]{1,30})(?:\/|$)/i);
+  const h = (m ? m[1]! : b.replace(/^@/, "")).replace(/\.+$/, "");
+  return /^[A-Za-z0-9._]{1,30}$/.test(h) && !/^\.|\.\./.test(h) ? h.toLowerCase() : null;
+}
+
 export function normalizeGithub(input?: string | null): string | null {
   if (!input?.trim()) return null;
   const b = bare(input);

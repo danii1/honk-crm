@@ -93,7 +93,8 @@ describe("per-channel state", () => {
     expect(r.overall_stage).toBe("connection_pending");
 
     const due = await svc.due_followups({});
-    expect(due.channel_followups.map((d) => [d.channel, d.overdue])).toEqual([["linkedin", true]]);
+    // x got the default +3d follow-up (2020-01-04 09:00 Saigon) when it moved to contacted
+    expect(due.channel_followups.map((d) => [d.channel, d.overdue]).toSorted()).toEqual([["linkedin", true], ["x", true]]);
     expect((await svc.stale_no_response({ days: 3 })).map((s) => s.channel).toSorted()).toEqual(["linkedin", "x"]);
     expect((await svc.linkedin_needs_first_message({})).map((x) => x.contact_id)).toEqual([contact.id]);
 

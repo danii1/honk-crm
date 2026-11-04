@@ -1,5 +1,5 @@
 import type { STAGES } from "./db/schema";
-import { normalizeEmail, normalizeGithub, normalizeLinkedin, normalizeRedditUser, normalizeXHandle } from "./normalize";
+import { normalizeEmail, normalizeGithub, normalizeLinkedin, normalizeRedditUser, normalizeThreadsHandle, normalizeXHandle } from "./normalize";
 
 type Stage = (typeof STAGES)[number];
 
@@ -80,6 +80,7 @@ export interface ExtractedIdentities {
   github: string[];
   reddit: string[];
   x: string[];
+  threads: string[];
   other_urls: string[];
 }
 
@@ -89,16 +90,17 @@ function add(arr: string[], v: string | null) {
 
 /** Pulls emails and profile URLs out of messy free text (notes, bios). */
 export function extractIdentities(text: string | undefined | null): ExtractedIdentities {
-  const out: ExtractedIdentities = { emails: [], linkedin: [], github: [], reddit: [], x: [], other_urls: [] };
+  const out: ExtractedIdentities = { emails: [], linkedin: [], github: [], reddit: [], x: [], threads: [], other_urls: [] };
   if (!text) return out;
   for (const m of text.matchAll(/(?<![\w.+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g)) add(out.emails, normalizeEmail(m[0]));
-  const urls = text.matchAll(/(?:https?:\/\/)?(?:[a-z0-9-]+\.)*(?:linkedin\.com|github\.com|reddit\.com|x\.com|twitter\.com)\/[^\s,;)<>"'\]]+|https?:\/\/[^\s,;)<>"'\]]+/gi);
+  const urls = text.matchAll(/(?:https?:\/\/)?(?:[a-z0-9-]+\.)*(?:linkedin\.com|github\.com|reddit\.com|x\.com|twitter\.com|threads\.net|threads\.com)\/[^\s,;)<>"'\]]+|https?:\/\/[^\s,;)<>"'\]]+/gi);
   for (const m of urls) {
     const u = m[0].replace(/[.:!?]+$/, "");
     const host = u.replace(/^https?:\/\//i, "").toLowerCase();
     if (/^([a-z0-9-]+\.)*linkedin\.com\//.test(host)) add(out.linkedin, normalizeLinkedin(u));
     else if (/^([a-z0-9-]+\.)*github\.com\//.test(host)) add(out.github, normalizeGithub(u));
     else if (/^([a-z0-9-]+\.)*reddit\.com\//.test(host)) add(out.reddit, normalizeRedditUser(u));
+    else if (/^([a-z0-9-]+\.)*threads\.(net|com)\//.test(host)) add(out.threads, normalizeThreadsHandle(u));
     else if (/^([a-z0-9-]+\.)*(x|twitter)\.com\//.test(host)) add(out.x, normalizeXHandle(u));
     else add(out.other_urls, u);
   }

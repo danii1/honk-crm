@@ -8,6 +8,8 @@ import { handleMcp } from "./mcp";
 import { AuthError, resolveOrgContext, resolveUser } from "./middleware";
 import { acceptInvitePage, consentPage, homePage, signInPage } from "./pages";
 import { createDb, type DB } from "./repository";
+import { contactPage, contactsPage, overviewPage } from "./dashboard";
+import { CrmService } from "./service";
 import { acceptInvite, switchOrg } from "./team";
 import { callTool, TOOL_INDEX } from "./tools";
 
@@ -85,6 +87,7 @@ app.post("/invites/accept", async (c) => {
 // REST mirror of the MCP tools: POST /v1/<tool> with the same JSON input.
 app.use("/v1/*", authed);
 app.get("/v1/me", (c) => c.json(c.get("org")));
+app.get("/v1/overview", async (c) => c.json(await callTool("daily_overview", { ...(c.req.query("tz") && { tz: c.req.query("tz") }) }, c.get("db"), c.get("org"), teamDeps(c))));
 app.post("/v1/:tool", async (c) => {
   const tool = c.req.param("tool");
   if (!TOOL_INDEX.has(tool)) return c.json({ error: "unknown tool" }, 404);
@@ -92,6 +95,31 @@ app.post("/v1/:tool", async (c) => {
   const idemHeader = c.req.header("idempotency-key");
   if (idemHeader && body && typeof body === "object" && !("idempotency_key" in body)) (body as Record<string, unknown>).idempotency_key = idemHeader;
   return c.json(await callTool(tool, body, c.get("db"), c.get("org"), teamDeps(c)));
+});
+
+// ---- read-only dashboard (Better Auth session; any role incl. viewer)
+const dashAuth = createMiddleware<{ Bindings: Env; Variables: Vars }>(async (c, next) => {
+  try {
+    c.set("org", await resolveOrgContext(c.req.raw, c.get("auth"), c.get("db"), mcpResource(c.env)));
+  } catch (e) {
+    if (e instanceof AuthError && e.status === 401) return c.redirect(`/sign-in?next=${encodeURIComponent(c.req.path)}`);
+    if (e instanceof AuthError) return c.html(`<p>${e.message}</p>`, e.status);
+    throw e;
+  }
+  await next();
+});
+app.use("/dashboard", dashAuth);
+app.use("/dashboard/*", dashAuth);
+const svcOf = (c: { get: (k: "db" | "org") => unknown }) => new CrmService(c.get("db") as DB, c.get("org") as OrgContext);
+app.get("/dashboard", async (c) => c.html(await overviewPage(svcOf(c))));
+app.get("/dashboard/contacts", async (c) => c.html(await contactsPage(svcOf(c), c.req.query())));
+app.get("/dashboard/contacts/:id", async (c) => {
+  try {
+    return c.html(await contactPage(svcOf(c), c.req.param("id")));
+  } catch (e) {
+    if (e instanceof CrmError && e.code === "not_found") return c.html("<p>Contact not found. <a href='/dashboard/contacts'>Back</a></p>", 404);
+    throw e;
+  }
 });
 
 export default app;

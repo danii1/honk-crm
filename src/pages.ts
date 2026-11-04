@@ -13,14 +13,16 @@ export const signInPage = () =>
     "Sign in",
     `<h1>Sign in</h1><form id="f"><input name="email" type="email" placeholder="email" required><input name="password" type="password" placeholder="password" required><button>Sign in</button></form><pre id="e"></pre>
 <script>
+const nx = new URLSearchParams(location.search).get("next");
+const next = nx && nx.startsWith("/") && !nx.startsWith("//") ? nx : null;
 f.onsubmit = async (ev) => {
   ev.preventDefault();
   const d = Object.fromEntries(new FormData(f));
   const r = await fetch("/api/auth/sign-in/email", { method: "POST", headers: { "content-type": "application/json" }, credentials: "include",
-    body: JSON.stringify({ ...d, oauth_query: location.search.slice(1) || undefined }) });
+    body: JSON.stringify({ ...d, oauth_query: next ? undefined : location.search.slice(1) || undefined }) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) { e.textContent = JSON.stringify(j); return; }
-  location.href = j.url || j.redirect_uri || "/";
+  location.href = j.url || j.redirect_uri || next || "/";
 };
 </script>`,
   );

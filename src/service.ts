@@ -1,9 +1,9 @@
 import { z } from "zod";
-import { BLOCK_KINDS, CHANNELS, CONTACT_TYPES, DIRECTIONS, DRAFT_STATES, OUTREACH_CHANNELS, SOURCES, STAGES, TOUCH_STATUSES, type OutreachChannel, type Stage } from "./db/schema";
+import { BLOCK_KINDS, CHANNELS, CONTACT_TYPES, DIRECTIONS, DRAFT_STATES, EVENT_TYPES, OUTREACH_CHANNELS, SOURCES, STAGES, TOUCH_STATUSES, type EventType, type OutreachChannel, type Stage } from "./db/schema";
 import { CrmError, requireRole, requireScope, type OrgContext } from "./context";
 import {
   companyDomainFromEmail, endOfLocalDay, localDateString, normalizeDomain, normalizeEmail, normalizeGithub, normalizeLinkedin,
-  isRedditRef, normalizeName, normalizeRedditUser, normalizeUrl, normalizeXHandle, sha256, similarNames, startOfLocalDay,
+  isRedditRef, isThreadsRef, normalizeThreadsHandle, normalizeName, normalizeRedditUser, normalizeUrl, normalizeXHandle, sha256, similarNames, startOfLocalDay,
 } from "./normalize";
 import { advance, defaultMatchMode, DRAFT_TRANSITIONS, matchBlocklist, normalizeBlockValue, normalizeHandle, rank, rollup, type Probe } from "./rules";
 import { extractIdentities, mapStatus, parseCsvObjects, toCsv } from "./csv";
@@ -14,10 +14,24 @@ const idem = z.string().min(8).max(200).optional().describe("Idempotency key; re
 const reasonField = z.string().max(2000).optional().describe("Why the agent is doing this; stored in the activity log");
 // Plain ISO strings (not z.date) so the schema converts to JSON Schema for MCP.
 const date = z.string().refine((v) => !Number.isNaN(Date.parse(v)), "expected an ISO 8601 date/time").describe("ISO 8601 date/time");
+const markSentBase = {
+  draft_id: z.string().optional(),
+  intent_url: z.string().optional().describe("Exact intent URL stored on the draft"),
+  post_id: z.string().optional().describe("Id or URL of the post the draft replied to / targets (e.g. tweet id or x.com/.../status/ID)"),
+  external_id: z.string().optional().describe("Id of the sent message (tweet id or URL, gmail message id)"),
+  external_url: z.string().optional().describe("URL of the sent message"),
+  thread_id: z.string().optional().describe("Thread id; defaults to post_id"),
+  sent_at: date.optional(),
+  next_followup_at: date.optional().describe("Override the per-channel default follow-up"),
+  idempotency_key: idem,
+  reason: reasonField,
+};
+const markSent = z.object(markSentBase).refine((v) => v.draft_id || v.intent_url || v.post_id || v.external_id || v.external_url, "give draft_id, intent_url, post_id, external_id or external_url");
+const channelDays = z.object({ x: z.number().min(0).max(365), linkedin: z.number().min(0).max(365), email: z.number().min(0).max(365), reddit: z.number().min(0).max(365), threads: z.number().min(0).max(365) }).partial().optional();
 const toDate = (v: string | undefined) => (v === undefined ? undefined : new Date(v));
 
-const CLEARABLE = ["x_handle", "linkedin_url", "reddit_user", "github", "email", "profile_url", "website", "company_id"] as const;
-const CLEAR_FIELD = { x_handle: "xHandle", linkedin_url: "linkedin", reddit_user: "redditUser", github: "github", email: "email", profile_url: "profileUrl", website: "website", company_id: "companyId" } as const;
+const CLEARABLE = ["x_handle", "linkedin_url", "reddit_user", "github", "threads_handle", "email", "profile_url", "website", "company_id"] as const;
+const CLEAR_FIELD = { x_handle: "xHandle", linkedin_url: "linkedin", reddit_user: "redditUser", github: "github", threads_handle: "threadsHandle", email: "email", profile_url: "profileUrl", website: "website", company_id: "companyId" } as const;
 
 export const schemas = {
   search_contacts: z.object({
@@ -40,6 +54,7 @@ export const schemas = {
     x: z.string().optional().describe("Alias of x_handle"),
     reddit_user: z.string().optional().describe("u/name or reddit.com/user URL"),
     github: z.string().optional().describe("login or github.com URL"),
+    threads_handle: z.string().optional().describe("@handle or threads.net / threads.com URL"),
     campaign_id: z.string().optional(),
     contact_type: z.enum(CONTACT_TYPES).optional().describe("lead (default) or competitor. Leads matching the competitor blocklist are rejected."),
     source: z.enum(SOURCES).optional(),
@@ -85,6 +100,8 @@ export const schemas = {
     subject: z.string().optional(),
     body: z.string().optional(),
     external_id: z.string().optional().describe("Message id in the sending system; deduped per org+channel"),
+    external_url: z.string().optional(),
+    thread_id: z.string().optional().describe("Thread id (tweet conversation/status id, gmail threadId, reddit post id)"),
     sequence_id: z.string().optional(),
     sent_at: date.optional(),
     follow_up_in_days: z.number().min(0).max(365).optional().describe("Also create a follow-up task"),
@@ -129,6 +146,7 @@ export const schemas = {
     linkedin_url: z.string().optional(),
     reddit_user: z.string().optional(),
     github: z.string().optional(),
+    threads_handle: z.string().optional(),
     domain: z.string().optional().describe("Company domain or website"),
     name: z.string().optional(),
     company: z.string().optional().describe("Company name for fuzzy name+company matching"),
@@ -183,6 +201,7 @@ export const schemas = {
     channel: z.enum(OUTREACH_CHANNELS),
     text: z.string().min(1),
     intent_url: z.string().optional().describe("e.g. an x.com/intent URL the human clicks to send"),
+    thread_id: z.string().optional().describe("Thread the draft replies into (tweet/conversation id, gmail threadId, reddit post id)"),
     campaign_id: z.string().optional().describe("Defaults to the contact's campaign"),
     idempotency_key: idem,
     reason: reasonField,
@@ -230,11 +249,15 @@ export const schemas = {
     limit: z.number().int().min(1).max(500).default(100),
   }),
   stale_no_response: z.object({
-    days: z.number().min(0).max(365),
+    days: z.number().min(0).max(365).optional().describe("Override; default per channel from org followup rules (x 6, linkedin 10, email 8, reddit 8)"),
     channel: z.enum(OUTREACH_CHANNELS).optional(),
     limit: z.number().int().min(1).max(500).default(100),
   }),
   linkedin_needs_first_message: z.object({ limit: z.number().int().min(1).max(500).default(100) }),
+  linkedin_connected_no_first_message: z.object({
+    days: z.number().min(0).max(365).default(0).describe("Connected for at least this many days"),
+    limit: z.number().int().min(1).max(500).default(100),
+  }),
   x_pacing_today: z.object({
     tz: z.string().default("Asia/Saigon"),
     max_per_day: z.number().int().min(1).default(8),
@@ -247,6 +270,42 @@ export const schemas = {
     goal_paying: z.number().int().default(3),
     goal_pilots: z.number().int().default(10),
   }),
+  mark_draft_sent: markSent,
+  sync_sent: z.object({
+    items: z.array(markSent).min(1).max(200),
+    idempotency_key: idem,
+    reason: reasonField,
+  }),
+  record_event: z.object({
+    type: z.enum(EVENT_TYPES),
+    channel: z.enum(OUTREACH_CHANNELS),
+    external_id: z.string().min(1).describe("Tweet id, gmail message id, linkedin profile...; deduped per org+channel+type"),
+    thread_id: z.string().optional(),
+    contact_id: z.string().optional(),
+    x_handle: z.string().optional(),
+    linkedin_url: z.string().optional(),
+    email: z.string().optional(),
+    reddit_user: z.string().optional(),
+    github: z.string().optional(),
+    threads_handle: z.string().optional(),
+    occurred_at: date.optional(),
+    summary: z.string().max(4000).optional(),
+    idempotency_key: idem,
+    reason: reasonField,
+  }),
+  find_by_thread: z.object({ channel: z.enum(OUTREACH_CHANNELS), thread_id: z.string().min(1) }),
+  get_followup_rules: z.object({}),
+  set_followup_rules: z.object({
+    followup_days: channelDays.describe("Days after contact to schedule the follow-up"),
+    stale_days: channelDays.describe("Days without response before stale_no_response flags it"),
+    reason: reasonField,
+  }),
+  bulk_update_stage: z.object({
+    items: z.array(z.object({ contact_id: z.string(), channel: z.enum(OUTREACH_CHANNELS).optional(), stage: z.enum(STAGES), idempotency_key: idem })).min(1).max(500),
+    idempotency_key: idem,
+    reason: reasonField,
+  }),
+  daily_overview: z.object({ tz: z.string().default("Asia/Saigon"), limit: z.number().int().min(1).max(500).default(50) }),
   import_leads_csv: z.object({
     csv: z.string().min(1).describe("CSV text with header handle,name,profile_url,bio_summary,followers,company,role,est_team_size,signal_post_url,signal_post_date,signal_summary,score,source,status,first_seen,notes"),
     dry_run: z.boolean().default(true).describe("Default true: report what would happen without writing"),
@@ -265,6 +324,30 @@ export const schemas = {
 export type Input<K extends keyof typeof schemas> = z.input<(typeof schemas)[K]>;
 
 const DAY = 86_400_000;
+const TZ = "Asia/Saigon";
+export const DEFAULT_FOLLOWUP_DAYS: Record<OutreachChannel, number> = { x: 3, linkedin: 5, email: 4, reddit: 4, threads: 3 };
+export const DEFAULT_STALE_DAYS: Record<OutreachChannel, number> = { x: 6, linkedin: 10, email: 8, reddit: 8, threads: 6 };
+const TERMINAL: Stage[] = ["paying", "lost", "do_not_contact"];
+/** Pull a post/status id out of a tweet URL (or return the value itself). */
+export function postId(ref?: string): string | undefined {
+  if (!ref) return undefined;
+  const m = /\/status(?:es)?\/(\d+)/.exec(ref) ?? /[?&](?:in_reply_to|tweet_id)=(\d+)/.exec(ref);
+  return m ? m[1] : ref.trim();
+}
+const EVENT_STAGE: Record<EventType, { stage: Stage; nextStep?: string | null; followup?: "clear" | "today" }> = {
+  reply_received: { stage: "responded", nextStep: "reply", followup: "clear" },
+  email_reply: { stage: "responded", nextStep: "reply", followup: "clear" },
+  connection_accepted: { stage: "connected", nextStep: "send first message", followup: "today" },
+  meeting_booked: { stage: "call_booked", followup: "clear" },
+  connection_requested: { stage: "connection_pending", nextStep: "check acceptance" },
+};
+
+const pickDraft = (ds: Awaited<ReturnType<Repository["draftsByIntentUrl"]>>, by: string) => {
+  const open = ds.filter((d) => d.state === "drafted" || d.state === "approved");
+  if (open.length > 1) throw new CrmError("conflict", `${open.length} open drafts match by ${by}; pass draft_id (${open.map((d) => d.id).join(", ")})`);
+  const d = open[0] ?? ds.find((x) => x.state === "sent");
+  return d ? { draft: d, matched_by: by } : undefined;
+};
 
 export class CrmService {
   readonly repo: Repository;
@@ -387,13 +470,14 @@ export class CrmService {
     return matchBlocklist(await this.repo.blocklistAll(), probe);
   }
 
-  private identitiesOf(i: { email?: string; linkedin_url?: string; linkedin?: string; x_handle?: string; x?: string; reddit_user?: string; github?: string }) {
+  private identitiesOf(i: { email?: string; linkedin_url?: string; linkedin?: string; x_handle?: string; x?: string; reddit_user?: string; github?: string; threads_handle?: string }) {
     return {
       email: normalizeEmail(i.email),
       linkedin: normalizeLinkedin(i.linkedin_url ?? i.linkedin),
       xHandle: normalizeXHandle(i.x_handle ?? i.x),
       redditUser: normalizeRedditUser(i.reddit_user),
       github: normalizeGithub(i.github),
+      threadsHandle: normalizeThreadsHandle(i.threads_handle),
     };
   }
 
@@ -401,11 +485,11 @@ export class CrmService {
     const i = schemas.upsert_contact.parse(raw);
     return this.idempotent("upsert_contact", i, async () => {
       const ids = this.identitiesOf(i);
-      for (const [k, v] of [["linkedin_url", i.linkedin_url ?? i.linkedin], ["x_handle", i.x_handle ?? i.x], ["reddit_user", i.reddit_user], ["github", i.github]] as const) {
-        const key = ({ linkedin_url: "linkedin", x_handle: "xHandle", reddit_user: "redditUser", github: "github" } as const)[k];
+      for (const [k, v] of [["linkedin_url", i.linkedin_url ?? i.linkedin], ["x_handle", i.x_handle ?? i.x], ["reddit_user", i.reddit_user], ["github", i.github], ["threads_handle", i.threads_handle]] as const) {
+        const key = ({ linkedin_url: "linkedin", x_handle: "xHandle", reddit_user: "redditUser", github: "github", threads_handle: "threadsHandle" } as const)[k];
         if (v && !ids[key]) throw new CrmError("invalid", `could not parse ${k} from ${JSON.stringify(v)}`);
       }
-      if (!Object.values(ids).some(Boolean) && !i.name && !i.contact_id) throw new CrmError("invalid", "need at least one identity (email, x_handle, linkedin_url, reddit_user, github) or a name");
+      if (!Object.values(ids).some(Boolean) && !i.name && !i.contact_id) throw new CrmError("invalid", "need at least one identity (email, x_handle, linkedin_url, reddit_user, github, threads_handle) or a name");
 
       // Dedupe across every identity. Two different contacts matching = conflict the caller must resolve.
       const found = await this.repo.contactsByIdentity(ids);
@@ -432,7 +516,7 @@ export class CrmService {
         const probe = await this.blockProbe({
           names: [i.name ?? existing?.name],
           companies: [companyName],
-          handles: [ids.xHandle, ids.github, ids.redditUser, ids.linkedin?.split("/").pop()],
+          handles: [ids.xHandle, ids.github, ids.redditUser, ids.threadsHandle, ids.linkedin?.split("/").pop()],
           domains: [companyDomain, normalizeDomain(ids.email)],
         });
         const hits = await this.competitorHits(probe);
@@ -450,6 +534,7 @@ export class CrmService {
         ...(ids.xHandle && { xHandle: ids.xHandle }),
         ...(ids.redditUser && { redditUser: ids.redditUser }),
         ...(ids.github && { github: ids.github }),
+        ...(ids.threadsHandle && { threadsHandle: ids.threadsHandle }),
         ...(i.name && { name: i.name }),
         ...(role && { role }),
         ...(companyId && { companyId }),
@@ -500,6 +585,10 @@ export class CrmService {
     const before = await this.repo.channelState(contactId, channel);
     const from = before?.stage ?? "new";
     const to = v.stage ? (v.exact ? v.stage : advance(from, v.stage)) : from;
+    if (to === "contacted" && from !== "contacted" && v.nextFollowupAt === undefined) {
+      const days = (await this.followupRules()).followup_days[channel];
+      v = { ...v, nextFollowupAt: new Date(startOfLocalDay(v.lastTouchAt ?? new Date(), TZ).getTime() + days * DAY + 9 * 3_600_000) };
+    }
     const state = await this.repo.upsertChannelState(contactId, channel, {
       stage: to,
       ...(v.lastTouchAt && { lastTouchAt: v.lastTouchAt }),
@@ -545,7 +634,7 @@ export class CrmService {
           {
             stage: inbound ? "responded" : i.status === "sent" ? "contacted" : undefined,
             lastTouchAt: i.status === "draft" ? undefined : now,
-            ...(i.next_followup_at && { nextFollowupAt: new Date(i.next_followup_at) }),
+            ...(i.next_followup_at ? { nextFollowupAt: new Date(i.next_followup_at) } : inbound ? { nextFollowupAt: null } : {}),
           },
           i.reason,
         );
@@ -574,7 +663,7 @@ export class CrmService {
 
   private recordTouch(
     contactId: string,
-    t: { channel: (typeof CHANNELS)[number]; direction: "outbound" | "inbound"; status: (typeof TOUCH_STATUSES)[number]; subject?: string; body?: string; external_id?: string; sentAt: Date; sequenceId?: string | null },
+    t: { channel: (typeof CHANNELS)[number]; direction: "outbound" | "inbound"; status: (typeof TOUCH_STATUSES)[number]; subject?: string; body?: string; external_id?: string; external_url?: string; thread_id?: string; sentAt: Date; sequenceId?: string | null },
   ) {
     return this.repo.insertTouch({
       contactId,
@@ -585,6 +674,8 @@ export class CrmService {
       subject: t.subject,
       body: t.body,
       externalId: t.external_id,
+      externalUrl: t.external_url,
+      threadId: t.thread_id,
       sentAt: t.status === "draft" ? null : t.sentAt,
       repliedAt: t.status === "replied" || t.direction === "inbound" ? t.sentAt : null,
     });
@@ -650,14 +741,15 @@ export class CrmService {
     const ids = {
       email: normalizeEmail(i.email ?? (any?.includes("@") && !any.startsWith("@") ? any : undefined)),
       linkedin: normalizeLinkedin(i.linkedin_url ?? (any && /linkedin\.com/i.test(any) ? any : undefined)),
-      xHandle: normalizeXHandle(i.x_handle ?? (any && !/linkedin|github|reddit/i.test(any) ? any : undefined)),
+      xHandle: normalizeXHandle(i.x_handle ?? (any && !/linkedin|github|reddit|threads/i.test(any) ? any : undefined)),
       redditUser: normalizeRedditUser(i.reddit_user ?? (any && (/reddit\.com|^\/?u\//i.test(any) || !/[./@]/.test(any)) ? any : undefined)),
       github: normalizeGithub(i.github ?? (any && (/github\.com/i.test(any) || !/[./@]/.test(any)) ? any : undefined)),
+      threadsHandle: normalizeThreadsHandle(i.threads_handle ?? (any && (isThreadsRef(any) || !/[/@]/.test(any)) ? any : undefined)),
     };
     const domain = normalizeDomain(i.domain) ?? companyDomainFromEmail(ids.email);
     const exact = (await this.repo.contactsByIdentity(ids)).map((c) => ({
       contact: c,
-      match: (["email", "linkedin", "xHandle", "redditUser", "github"] as const).filter((k) => ids[k] && c[k] === ids[k]).map((k) => ({ xHandle: "x_handle", redditUser: "reddit_user", linkedin: "linkedin_url" } as Record<string, string>)[k] ?? k),
+      match: (["email", "linkedin", "xHandle", "redditUser", "github", "threadsHandle"] as const).filter((k) => ids[k] && c[k] === ids[k]).map((k) => ({ xHandle: "x_handle", redditUser: "reddit_user", linkedin: "linkedin_url", threadsHandle: "threads_handle" } as Record<string, string>)[k] ?? k),
     }));
     const seen = new Set(exact.map((e) => e.contact.id));
     const by_domain = domain
@@ -683,7 +775,7 @@ export class CrmService {
       candidates.sort((a, b) => b.score - a.score);
     }
     const hits = await this.competitorHits(
-      await this.blockProbe({ names: [i.name], companies: [i.company], handles: [ids.xHandle, ids.github, ids.redditUser, ids.linkedin?.split("/").pop()], domains: [domain] }),
+      await this.blockProbe({ names: [i.name], companies: [i.company], handles: [ids.xHandle, ids.github, ids.redditUser, ids.threadsHandle, ids.linkedin?.split("/").pop()], domains: [domain] }),
     );
     return {
       found: exact.length > 0,
@@ -705,7 +797,7 @@ export class CrmService {
       const co = c.companyId ? await this.repo.companyById(c.companyId) : undefined;
       probe.personNames.push(...[c.name].filter((x): x is string => !!x));
       probe.companyNames.push(...[co?.name].filter((x): x is string => !!x));
-      probe.handles.push(...[c.xHandle, c.github, c.redditUser, c.linkedin?.split("/").pop()].filter((x): x is string => !!x));
+      probe.handles.push(...[c.xHandle, c.github, c.redditUser, c.threadsHandle, c.linkedin?.split("/").pop()].filter((x): x is string => !!x));
       probe.domains.push(...[co?.domain, normalizeDomain(c.email)].filter((x): x is string => !!x));
       if (c.contactType === "competitor") return { is_competitor: true, matches: [{ entry: null, matched_on: "contact_type:competitor" }] };
     }
@@ -823,7 +915,7 @@ export class CrmService {
       if (state?.stage === "do_not_contact") throw new CrmError("blocked", `contact is do_not_contact on ${i.channel}`);
       const campaignId = i.campaign_id ?? contact.campaignId;
       if (i.campaign_id && !(await this.repo.campaignById(i.campaign_id))) throw new CrmError("not_found", `campaign ${i.campaign_id} not found`);
-      const draft = await this.repo.insertDraft({ contactId: contact.id, channel: i.channel, text: i.text, intentUrl: i.intent_url, campaignId, state: "drafted", stateChangedAt: new Date() });
+      const draft = await this.repo.insertDraft({ contactId: contact.id, channel: i.channel, text: i.text, intentUrl: i.intent_url, threadId: i.thread_id, campaignId, state: "drafted", stateChangedAt: new Date() });
       await this.repo.appendActivity({ action: "draft.created", entityType: "draft", entityId: draft.id, reason: i.reason, payload: { contact_id: contact.id, channel: i.channel, campaign_id: campaignId } });
       await this.bumpChannel(contact.id, i.channel, { stage: "drafted" }, i.reason);
       return draft;
@@ -850,13 +942,8 @@ export class CrmService {
       let touch = null;
       let pacing = null;
       if (i.to === "sent") {
-        const contact = (await this.repo.contactById(draft.contactId))!;
-        if (draft.channel === "x") pacing = await this.x_pacing_today({ now: sentAt!.toISOString() });
-        touch = await this.recordTouch(draft.contactId, { channel: draft.channel, direction: "outbound", status: "sent", body: updated.text, external_id: i.external_id, sentAt: sentAt!, sequenceId: contact.sequenceId });
         const followup = i.next_followup_at ? new Date(i.next_followup_at) : i.follow_up_in_days !== undefined ? new Date(sentAt!.getTime() + i.follow_up_in_days * DAY) : undefined;
-        await this.bumpChannel(draft.contactId, draft.channel, { stage: "contacted", lastTouchAt: sentAt, ...(followup && { nextFollowupAt: followup }) }, i.reason);
-        await this.repo.updateContact(draft.contactId, { lastTouchAt: sentAt });
-        await this.repo.appendActivity({ action: "touch.logged", entityType: "contact", entityId: draft.contactId, reason: i.reason, payload: { touch_id: touch.id, channel: draft.channel, draft_id: draft.id } });
+        ({ touch, pacing } = await this.afterSent(updated, { sentAt: sentAt!, externalId: i.external_id, followup, reason: i.reason }));
       } else if (i.to === "discarded") {
         // A discarded draft no longer holds the channel at "drafted".
         const st = await this.repo.channelState(draft.contactId, draft.channel);
@@ -865,6 +952,231 @@ export class CrmService {
       }
       return { draft: updated, touch, x_pacing_before_send: pacing };
     });
+  }
+
+  /** Shared "a draft was sent" side effects: touch, channel stage/followup, contact last touch, activity. */
+  private async afterSent(draft: { id: string; contactId: string; channel: OutreachChannel; text: string; threadId?: string | null }, o: { sentAt: Date; externalId?: string; externalUrl?: string; followup?: Date; reason?: string }) {
+    const contact = (await this.repo.contactById(draft.contactId))!;
+    const pacing = draft.channel === "x" ? await this.x_pacing_today({ now: o.sentAt.toISOString() }) : null;
+    const dup = o.externalId ? await this.repo.touchByExternalId(draft.channel, o.externalId) : undefined;
+    const touch =
+      dup ??
+      (await this.recordTouch(draft.contactId, { channel: draft.channel, direction: "outbound", status: "sent", body: draft.text, external_id: o.externalId, external_url: o.externalUrl, thread_id: draft.threadId ?? undefined, sentAt: o.sentAt, sequenceId: contact.sequenceId }));
+    await this.bumpChannel(draft.contactId, draft.channel, { stage: "contacted", lastTouchAt: o.sentAt, ...(o.followup && { nextFollowupAt: o.followup }) }, o.reason);
+    await this.repo.updateContact(draft.contactId, { lastTouchAt: o.sentAt });
+    await this.repo.appendActivity({ action: "touch.logged", entityType: "contact", entityId: draft.contactId, reason: o.reason, payload: { touch_id: touch.id, channel: draft.channel, draft_id: draft.id, external_id: o.externalId } });
+    return { touch, pacing };
+  }
+
+  private async findDraftForSent(i: z.output<typeof markSent>) {
+    if (i.draft_id) {
+      const d = await this.repo.draftById(i.draft_id);
+      if (!d) throw new CrmError("not_found", `draft ${i.draft_id} not found`);
+      return { draft: d, matched_by: "draft_id" };
+    }
+    if (i.intent_url) {
+      const r = pickDraft(await this.repo.draftsByIntentUrl(i.intent_url), "intent_url");
+      if (r) return r;
+    }
+    // Already-sent check first so retries are idempotent.
+    for (const ref of [postId(i.external_id), postId(i.external_url)].filter((x): x is string => !!x)) {
+      const sent = (await this.repo.draftsByExternalRef(ref)).find((d) => d.state === "sent" && d.externalId === ref);
+      if (sent) return { draft: sent, matched_by: "external_id" };
+    }
+    for (const [ref, by] of [[postId(i.post_id), "post_id"], [postId(i.external_id), "external_id"], [postId(i.external_url), "external_url"]] as const) {
+      if (!ref) continue;
+      const r = pickDraft(await this.repo.draftsByExternalRef(ref), by);
+      if (r) return r;
+    }
+    throw new CrmError("not_found", "no draft matches draft_id/intent_url/post_id/external_id");
+  }
+
+  private async markOne(i: z.output<typeof markSent>) {
+    const { draft, matched_by } = await this.findDraftForSent(i);
+    if (draft.state === "sent") return { status: "already_sent" as const, matched_by, draft, touch: null, x_pacing_before_send: null };
+    if (draft.state === "discarded") throw new CrmError("conflict", `draft ${draft.id} was discarded`);
+    const now = new Date();
+    const sentAt = toDate(i.sent_at) ?? now;
+    const externalId = postId(i.external_id) ?? (i.external_url ? postId(i.external_url) : undefined);
+    const threadId = i.thread_id ?? draft.threadId ?? postId(i.post_id) ?? undefined;
+    const updated = await this.repo.updateDraft(draft.id, { state: "sent", stateChangedAt: now, sentAt, externalId, externalUrl: i.external_url ?? (i.external_id?.startsWith("http") ? i.external_id : undefined), threadId });
+    await this.repo.appendActivity({ action: "draft.state_changed", entityType: "draft", entityId: draft.id, reason: i.reason, payload: { from: draft.state, to: "sent", contact_id: draft.contactId, channel: draft.channel, matched_by, external_id: externalId } });
+    const { touch, pacing } = await this.afterSent(updated, { sentAt, externalId, externalUrl: updated.externalUrl ?? undefined, followup: toDate(i.next_followup_at), reason: i.reason });
+    const state = await this.repo.channelState(draft.contactId, draft.channel);
+    return { status: "sent" as const, matched_by, draft: updated, touch, channel_state: state, x_pacing_before_send: pacing };
+  }
+
+  async mark_draft_sent(raw: Input<"mark_draft_sent">) {
+    const i = schemas.mark_draft_sent.parse(raw);
+    return this.idempotent("mark_draft_sent", i, () => this.markOne(i));
+  }
+
+  async sync_sent(raw: Input<"sync_sent">) {
+    const i = schemas.sync_sent.parse(raw);
+    return this.idempotent("sync_sent", i, async () => {
+      const results = [];
+      for (const [index, item] of i.items.entries()) {
+        try {
+          const one = { ...item, reason: item.reason ?? i.reason };
+          const r = await this.idempotent("mark_draft_sent", one, () => this.markOne(one));
+          results.push({ index, ok: true, status: r.status, draft_id: r.draft.id, contact_id: r.draft.contactId, matched_by: r.matched_by });
+        } catch (e) {
+          results.push({ index, ok: false, error: e instanceof CrmError ? e.code : "error", message: (e as Error).message });
+        }
+      }
+      return { results, sent: results.filter((r) => r.status === "sent").length, already_sent: results.filter((r) => r.status === "already_sent").length, failed: results.filter((r) => !r.ok).length };
+    });
+  }
+
+  private async resolveContact(i: { contact_id?: string; x_handle?: string; linkedin_url?: string; email?: string; reddit_user?: string; github?: string; threads_handle?: string; channel: OutreachChannel; thread_id?: string }) {
+    if (i.contact_id) {
+      const c = await this.repo.contactById(i.contact_id);
+      if (!c) throw new CrmError("not_found", `contact ${i.contact_id} not found`);
+      return { contact: c, resolved_by: "contact_id" };
+    }
+    const ids = {
+      xHandle: i.x_handle ? normalizeXHandle(i.x_handle) : undefined,
+      linkedin: i.linkedin_url ? normalizeLinkedin(i.linkedin_url) : undefined,
+      email: i.email ? normalizeEmail(i.email) : undefined,
+      redditUser: i.reddit_user ? normalizeRedditUser(i.reddit_user) : undefined,
+      github: i.github ? normalizeGithub(i.github) : undefined,
+      threadsHandle: i.threads_handle ? normalizeThreadsHandle(i.threads_handle) : undefined,
+    };
+    if (Object.values(ids).some(Boolean)) {
+      const found = await this.repo.contactsByIdentity(ids);
+      if (found.length > 1) throw new CrmError("conflict", `identities match ${found.length} contacts; pass contact_id`);
+      if (found[0]) return { contact: found[0], resolved_by: "identity" };
+    }
+    if (i.thread_id) {
+      const hit = (await this.repo.contactIdsByThread(i.channel, i.thread_id))[0];
+      if (hit) return { contact: (await this.repo.contactById(hit.id))!, resolved_by: `thread:${hit.src}` };
+    }
+    throw new CrmError("not_found", "no contact matches contact_id, identities or thread_id");
+  }
+
+  async record_event(raw: Input<"record_event">) {
+    const i = schemas.record_event.parse(raw);
+    return this.idempotent("record_event", i, async () => {
+      const dup = await this.repo.eventByKey(i.channel, i.type, i.external_id);
+      if (dup) return { event: dup, deduped: true, contact_id: dup.contactId, stage_changed: false, resolved_by: "dedupe" as string, channel_state: undefined, overall_stage: undefined as string | undefined, skipped: undefined as string | undefined };
+      const { contact, resolved_by } = await this.resolveContact(i);
+      const at = toDate(i.occurred_at) ?? new Date();
+      const event = await this.repo.insertEvent({ contactId: contact.id, channel: i.channel, type: i.type, externalId: i.external_id, threadId: i.thread_id, summary: i.summary, occurredAt: at });
+      const before = await this.repo.channelState(contact.id, i.channel);
+      const from = before?.stage ?? "new";
+      const rule = EVENT_STAGE[i.type];
+      const terminal = TERMINAL.includes(contact.stage) || TERMINAL.includes(from);
+      let state = before ?? null;
+      if (terminal) {
+        state = await this.repo.upsertChannelState(contact.id, i.channel, { stage: from, lastTouchAt: at });
+      } else {
+        const moves = rank(rule.stage) > rank(from);
+        state = await this.bumpChannel(
+          contact.id,
+          i.channel,
+          {
+            stage: rule.stage,
+            lastTouchAt: at,
+            ...(moves && rule.nextStep !== undefined && { nextStep: rule.nextStep }),
+            ...(moves && rule.followup === "clear" && { nextFollowupAt: null }),
+            ...(moves && rule.followup === "today" && { nextFollowupAt: at }),
+          },
+          i.reason,
+        );
+      }
+      await this.repo.updateContact(contact.id, { lastTouchAt: at });
+      const after = (await this.repo.contactById(contact.id))!;
+      await this.repo.appendActivity({ action: "event.recorded", entityType: "contact", entityId: contact.id, reason: i.reason, payload: { event_id: event.id, type: i.type, channel: i.channel, external_id: i.external_id, thread_id: i.thread_id, stage_from: from, stage_to: state.stage, terminal_guard: terminal } });
+      return { event, deduped: false, contact_id: contact.id, resolved_by, stage_changed: state.stage !== from, channel_state: state, overall_stage: after.stage, ...(terminal && { skipped: `contact is ${TERMINAL.includes(contact.stage) ? contact.stage : from}; stage not changed` }) };
+    });
+  }
+
+  async find_by_thread(raw: Input<"find_by_thread">) {
+    requireScope(this.ctx, "crm:read");
+    const i = schemas.find_by_thread.parse(raw);
+    const hits = await this.repo.contactIdsByThread(i.channel, i.thread_id);
+    if (!hits[0]) return { contact: null, matched_by: null, contact_ids: [] };
+    const ids = [...new Set(hits.map((h) => h.id))];
+    const contact = await this.repo.contactById(hits[0].id);
+    const state = await this.repo.channelState(hits[0].id, i.channel);
+    return { contact, channel_state: state ?? null, matched_by: hits[0].src, contact_ids: ids };
+  }
+
+  private async followupRules() {
+    const r = (await this.repo.getSettings())?.followupRules ?? {};
+    return { followup_days: { ...DEFAULT_FOLLOWUP_DAYS, ...r.followup_days }, stale_days: { ...DEFAULT_STALE_DAYS, ...r.stale_days } };
+  }
+
+  async get_followup_rules(_raw: Input<"get_followup_rules"> = {}) {
+    requireScope(this.ctx, "crm:read");
+    return { ...(await this.followupRules()), tz: TZ, defaults: { followup_days: DEFAULT_FOLLOWUP_DAYS, stale_days: DEFAULT_STALE_DAYS } };
+  }
+
+  async set_followup_rules(raw: Input<"set_followup_rules">) {
+    const i = schemas.set_followup_rules.parse(raw);
+    requireRole(this.ctx, "admin");
+    requireScope(this.ctx, "crm:write");
+    const cur = (await this.repo.getSettings())?.followupRules ?? {};
+    const next = { followup_days: { ...cur.followup_days, ...i.followup_days }, stale_days: { ...cur.stale_days, ...i.stale_days } };
+    await this.repo.setFollowupRules(next);
+    await this.repo.appendActivity({ action: "settings.followup_rules", entityType: "org", entityId: this.ctx.orgId, reason: i.reason, payload: next });
+    return this.get_followup_rules();
+  }
+
+  async bulk_update_stage(raw: Input<"bulk_update_stage">) {
+    const i = schemas.bulk_update_stage.parse(raw);
+    return this.idempotent("bulk_update_stage", i, async () => {
+      const results = [];
+      for (const [index, it] of i.items.entries()) {
+        try {
+          if (it.channel) {
+            const before = await this.repo.channelState(it.contact_id, it.channel);
+            const r = await this.set_channel_state({ contact_id: it.contact_id, channel: it.channel, stage: it.stage, idempotency_key: it.idempotency_key, reason: i.reason });
+            results.push({ index, ok: true, contact_id: it.contact_id, channel: it.channel, from: before?.stage ?? "new", stage: r.state.stage, overall_stage: r.overall_stage, changed: (before?.stage ?? "new") !== r.state.stage });
+          } else {
+            const before = await this.repo.contactById(it.contact_id);
+            const r = await this.update_stage({ contact_id: it.contact_id, stage: it.stage, idempotency_key: it.idempotency_key, reason: i.reason });
+            results.push({ index, ok: true, contact_id: it.contact_id, channel: null, from: before?.stage ?? null, stage: r.stage, overall_stage: r.stage, changed: before?.stage !== r.stage });
+          }
+        } catch (e) {
+          results.push({ index, ok: false, contact_id: it.contact_id, error: e instanceof CrmError ? e.code : "error", message: (e as Error).message });
+        }
+      }
+      return { results, updated: results.filter((r) => r.ok && r.changed).length, unchanged: results.filter((r) => r.ok && !r.changed).length, failed: results.filter((r) => !r.ok).length };
+    });
+  }
+
+  async daily_overview(raw: Input<"daily_overview"> = {}) {
+    requireScope(this.ctx, "crm:read");
+    const i = schemas.daily_overview.parse(raw);
+    const now = new Date();
+    const [followups, linkedin, events, drafted, approved, pacing, stale, report] = await Promise.all([
+      this.due_followups({ tz: i.tz, limit: i.limit }),
+      this.linkedin_needs_first_message({ limit: i.limit }),
+      this.repo.eventsSince(new Date(now.getTime() - DAY)),
+      this.repo.listDrafts({ state: "drafted", limit: i.limit }),
+      this.repo.listDrafts({ state: "approved", limit: i.limit }),
+      this.x_pacing_today({ tz: i.tz }),
+      this.stale_no_response({ limit: i.limit }),
+      this.outreach_report({ tz: i.tz }),
+    ]);
+    const names = new Map((await this.repo.allContacts()).map((c) => [c.id, c.name]));
+    const replies = events.filter((e) => e.type === "reply_received" || e.type === "email_reply");
+    return {
+      date: localDateString(now, i.tz),
+      tz: i.tz,
+      followups_due: followups.channel_followups,
+      tasks_due: followups.tasks,
+      linkedin_awaiting_first_message: linkedin,
+      new_replies: replies.map((e) => ({ ...e, name: names.get(e.contactId) ?? null })),
+      events_last_24h: events.map((e) => ({ ...e, name: names.get(e.contactId) ?? null })),
+      drafts_pending: [...approved, ...drafted].map((d) => ({ id: d.id, contact_id: d.contactId, name: names.get(d.contactId) ?? null, channel: d.channel, state: d.state, text: d.text, intent_url: d.intentUrl, created_at: d.createdAt })),
+      x_pacing: pacing,
+      stale,
+      goal: report.goal,
+      totals: report.totals,
+      stages: report.stages,
+    };
   }
 
   async list_drafts(raw: Input<"list_drafts">) {
@@ -924,12 +1236,15 @@ export class CrmService {
   async stale_no_response(raw: Input<"stale_no_response">) {
     requireScope(this.ctx, "crm:read");
     const i = schemas.stale_no_response.parse(raw);
-    const before = new Date(Date.now() - i.days * DAY);
-    const rows = await this.repo.staleStates(before, ["contacted", "connection_pending", "connected"], 1000);
+    const rules = (await this.followupRules()).stale_days;
+    const days = (ch: OutreachChannel) => i.days ?? rules[ch];
+    const minDays = Math.min(...OUTREACH_CHANNELS.map(days));
+    const now = Date.now();
+    const rows = await this.repo.staleStates(new Date(now - minDays * DAY), ["contacted", "connection_pending", "connected"], 2000);
     return rows
-      .filter((r) => (!i.channel || r.state.channel === i.channel) && r.contact.stage !== "do_not_contact")
+      .filter((r) => (!i.channel || r.state.channel === i.channel) && r.contact.stage !== "do_not_contact" && r.state.lastTouchAt!.getTime() < now - days(r.state.channel) * DAY)
       .slice(0, i.limit)
-      .map((r) => ({ contact_id: r.contact.id, name: r.contact.name, channel: r.state.channel, stage: r.state.stage, last_touch_at: r.state.lastTouchAt, days_since: Math.floor((Date.now() - r.state.lastTouchAt!.getTime()) / DAY) }));
+      .map((r) => ({ contact_id: r.contact.id, name: r.contact.name, channel: r.state.channel, stage: r.state.stage, last_touch_at: r.state.lastTouchAt, days_since: Math.floor((now - r.state.lastTouchAt!.getTime()) / DAY), threshold_days: days(r.state.channel) }));
   }
 
   async linkedin_needs_first_message(raw: Input<"linkedin_needs_first_message">) {
@@ -944,6 +1259,23 @@ export class CrmService {
       .filter((r) => !touched.has(r.contact.id) && !sentDrafts.has(r.contact.id) && r.contact.stage !== "do_not_contact")
       .slice(0, i.limit)
       .map((r) => ({ contact_id: r.contact.id, name: r.contact.name, linkedin: r.contact.linkedin, stage: r.state.stage, next_step: r.state.nextStep }));
+  }
+
+  async linkedin_connected_no_first_message(raw: Input<"linkedin_connected_no_first_message">) {
+    requireScope(this.ctx, "crm:read");
+    const i = schemas.linkedin_connected_no_first_message.parse(raw);
+    const [rows, accepted, sends] = await Promise.all([this.repo.statesByChannelStage("linkedin", ["connected"]), this.repo.eventTimes("linkedin", "connection_accepted"), this.repo.outboundSends("linkedin")]);
+    const now = Date.now();
+    return rows
+      .filter((r) => r.contact.stage !== "do_not_contact" && r.contact.contactType !== "competitor")
+      .map((r) => {
+        const at = accepted.get(r.contact.id) ?? r.state.lastTouchAt ?? r.state.updatedAt;
+        return { r, at };
+      })
+      .filter(({ r, at }) => now - at.getTime() >= i.days * DAY && !(sends.get(r.contact.id) ?? []).some((t) => t >= at))
+      .toSorted((a, b) => a.at.getTime() - b.at.getTime())
+      .slice(0, i.limit)
+      .map(({ r, at }) => ({ contact_id: r.contact.id, name: r.contact.name, linkedin: r.contact.linkedin, connected_at: at, days_connected: Math.floor((now - at.getTime()) / DAY), next_step: r.state.nextStep, next_followup_at: r.state.nextFollowupAt }));
   }
 
   async x_pacing_today(raw: Input<"x_pacing_today">) {
@@ -1065,7 +1397,7 @@ export class CrmService {
     type C = (typeof contacts)[number];
     const idx = new Map<string, C>();
     const index = (c: C) => {
-      for (const [k, v] of [["email", c.email], ["li", c.linkedin], ["x", c.xHandle], ["rd", c.redditUser], ["gh", c.github]] as const) if (v) idx.set(`${k}:${v}`, c);
+      for (const [k, v] of [["email", c.email], ["li", c.linkedin], ["x", c.xHandle], ["rd", c.redditUser], ["gh", c.github], ["th", c.threadsHandle]] as const) if (v) idx.set(`${k}:${v}`, c);
     };
     contacts.forEach(index);
     const companyById = new Map(companies.map((c) => [c.id, c]));
@@ -1090,7 +1422,7 @@ export class CrmService {
       }
 
       // Dedupe: any identity, then exact normalized name + company.
-      const keys = [["email", p.ids.email], ["li", p.ids.linkedin], ["x", p.ids.xHandle], ["rd", p.ids.redditUser], ["gh", p.ids.github]].filter(([, v]) => v).map(([k, v]) => `${k}:${v}`);
+      const keys = [["email", p.ids.email], ["li", p.ids.linkedin], ["x", p.ids.xHandle], ["rd", p.ids.redditUser], ["gh", p.ids.github], ["th", p.ids.threadsHandle]].filter(([, v]) => v).map(([k, v]) => `${k}:${v}`);
       const hits = [...new Set(keys.map((k) => idx.get(k)).filter((c): c is C => !!c))];
       if (hits.length > 1) {
         skip(`identities match ${hits.length} different contacts (${hits.map((h) => h.id).join(", ")})`);
@@ -1099,7 +1431,7 @@ export class CrmService {
       let existing = hits[0];
       if (!existing && p.name) {
         const coName = normalizeName(p.company);
-        const conflicts = (c: C) => (["email", "linkedin", "xHandle", "redditUser", "github"] as const).some((k) => !!p.ids[k] && !!c[k] && c[k] !== p.ids[k]) || (!!p.ids.redditUser && !c.redditUser && !!c.xHandle && !p.ids.xHandle);
+        const conflicts = (c: C) => (["email", "linkedin", "xHandle", "redditUser", "github", "threadsHandle"] as const).some((k) => !!p.ids[k] && !!c[k] && c[k] !== p.ids[k]) || (!!p.ids.redditUser && !c.redditUser && !!c.xHandle && !p.ids.xHandle);
         existing = contacts.find((c) => normalizeName(c.name) === normalizeName(p.name) && normalizeName(c.companyId ? companyById.get(c.companyId)?.name : "") === coName && !conflicts(c));
         if (existing) warnings.push("matched existing contact by name+company");
       }
@@ -1109,7 +1441,7 @@ export class CrmService {
         const hitsB = matchBlocklist(blocks, {
           personNames: [p.name].filter((x): x is string => !!x),
           companyNames: [p.company].filter((x): x is string => !!x),
-          handles: [p.ids.xHandle, p.ids.github, p.ids.redditUser, p.ids.linkedin?.split("/").pop()].filter((x): x is string => !!x),
+          handles: [p.ids.xHandle, p.ids.github, p.ids.redditUser, p.ids.threadsHandle, p.ids.linkedin?.split("/").pop()].filter((x): x is string => !!x),
           domains: [p.companyDomain, normalizeDomain(p.ids.email)].filter((x): x is string => !!x),
         });
         if (hitsB.length) {
@@ -1166,10 +1498,10 @@ export class CrmService {
         if (cur instanceof Date && v instanceof Date ? cur.getTime() !== v.getTime() : cur !== v) changes[k] = v;
       }
       // Identities/notes/company/campaign only fill blanks.
-      for (const [k, v] of [["email", p.ids.email], ["linkedin", p.ids.linkedin], ["xHandle", p.ids.xHandle], ["redditUser", p.ids.redditUser], ["github", p.ids.github]] as const) {
+      for (const [k, v] of [["email", p.ids.email], ["linkedin", p.ids.linkedin], ["xHandle", p.ids.xHandle], ["redditUser", p.ids.redditUser], ["github", p.ids.github], ["threadsHandle", p.ids.threadsHandle]] as const) {
         if (!v) continue;
         if (!existing?.[k]) {
-          if (idx.get(`${({ email: "email", linkedin: "li", xHandle: "x", redditUser: "rd", github: "gh" } as const)[k]}:${v}`)) warnings.push(`${k} ${v} already belongs to another contact; not set`);
+          if (idx.get(`${({ email: "email", linkedin: "li", xHandle: "x", redditUser: "rd", github: "gh", threadsHandle: "th" } as const)[k]}:${v}`)) warnings.push(`${k} ${v} already belongs to another contact; not set`);
           else changes[k] = v;
         } else if (existing[k] !== v) warnings.push(`${k} differs (crm=${existing[k]}, csv=${v}); kept crm value`);
       }
@@ -1206,7 +1538,7 @@ export class CrmService {
         index(saved);
       } else if (!write && !existing) {
         // Simulate so later rows in the same file dedupe against this one.
-        const ghost = { ...changes, id: `(row ${rowNo})`, name: p.name, companyId, contactType, stage: overall, email: changes.email ?? null, linkedin: changes.linkedin ?? null, xHandle: changes.xHandle ?? null, redditUser: changes.redditUser ?? null, github: changes.github ?? null } as unknown as C;
+        const ghost = { ...changes, id: `(row ${rowNo})`, name: p.name, companyId, contactType, stage: overall, email: changes.email ?? null, linkedin: changes.linkedin ?? null, xHandle: changes.xHandle ?? null, redditUser: changes.redditUser ?? null, github: changes.github ?? null, threadsHandle: changes.threadsHandle ?? null } as unknown as C;
         contacts.push(ghost);
         index(ghost);
       }
@@ -1228,18 +1560,18 @@ export class CrmService {
       .map((c) => {
         const co = c.companyId ? cos.get(c.companyId) : undefined;
         const st = (ch: string) => states.find((s) => s.contactId === c.id && s.channel === ch);
-        const handle = c.source === "reddit" ? c.redditUser : c.source === "linkedin" ? c.linkedin : c.xHandle ? `@${c.xHandle}` : (c.redditUser ?? c.github ?? "");
-        const derived = c.source === "linkedin" || (!c.xHandle && c.linkedin) ? (c.linkedin ? `https://${c.linkedin}` : "") : c.xHandle ? `https://x.com/${c.xHandle}` : c.redditUser ? `https://reddit.com/user/${c.redditUser}` : "";
+        const handle = c.source === "reddit" ? c.redditUser : c.source === "linkedin" ? c.linkedin : c.source === "threads" && c.threadsHandle ? `threads:@${c.threadsHandle}` : c.xHandle ? `@${c.xHandle}` : (c.redditUser ?? c.github ?? "");
+        const derived = c.source === "linkedin" || (!c.xHandle && c.linkedin) ? (c.linkedin ? `https://${c.linkedin}` : "") : c.source === "threads" && c.threadsHandle ? `https://www.threads.net/@${c.threadsHandle}` : c.xHandle ? `https://x.com/${c.xHandle}` : c.threadsHandle ? `https://www.threads.net/@${c.threadsHandle}` : c.redditUser ? `https://reddit.com/user/${c.redditUser}` : "";
         const profile = i.derived_profile_url ? derived || c.profileUrl : (c.profileUrl ?? derived);
         return [
           handle, c.name, profile, c.bioSummary, c.followers, co?.name, c.role, c.estTeamSize, c.signalPostUrl, c.signalDate, c.signalSummary, c.score, c.source,
           c.contactType === "competitor" ? "competitor" : c.stage, c.firstSeenAt?.toISOString().slice(0, 10), c.notesText,
           c.id, c.email, c.xHandle, c.linkedin, c.redditUser, c.github, co?.domain, c.contactType, c.campaignId,
           ...OUTREACH_CHANNELS.flatMap((ch) => [st(ch)?.stage, st(ch)?.nextFollowupAt?.toISOString()]),
-          c.website, c.sourceDetail, c.contactType === "competitor" ? "competitor" : c.stage,
+          c.website, c.sourceDetail, c.contactType === "competitor" ? "competitor" : c.stage, c.threadsHandle,
         ];
       });
-    const header = [...IMPORT_COLUMNS.map((h) => (h === "status" ? "stage" : h)), "id", "email", "x_handle", "linkedin_url", "reddit_user", "github", "company_domain", "contact_type", "campaign_id", ...OUTREACH_CHANNELS.flatMap((ch) => [`${ch}_stage`, `${ch}_next_followup_at`]), "website", "source_detail", "status"];
+    const header = [...IMPORT_COLUMNS.map((h) => (h === "status" ? "stage" : h)), "id", "email", "x_handle", "linkedin_url", "reddit_user", "github", "company_domain", "contact_type", "campaign_id", ...OUTREACH_CHANNELS.flatMap((ch) => [`${ch}_stage`, `${ch}_next_followup_at`]), "website", "source_detail", "status", "threads_handle"];
     return { rows: rows.length, csv: toCsv(header, rows) };
   }
 }
@@ -1271,13 +1603,14 @@ function localNoon(day: string, tz: string) {
 
 
 /** Which identity a profile URL carries; "site" = any other website. */
-export function profileKind(url?: string): "x" | "linkedin" | "reddit" | "github" | "site" | null {
+export function profileKind(url?: string): "x" | "linkedin" | "reddit" | "github" | "threads" | "site" | null {
   if (!url?.trim()) return null;
   const host = url.trim().replace(/^https?:\/\//i, "").replace(/^(www|m|mobile|old|new)\./i, "").toLowerCase();
   if (/^(x|twitter)\.com(\/|$)/.test(host)) return "x";
   if (/^([a-z]{2}\.)?linkedin\.com(\/|$)/.test(host)) return "linkedin";
   if (/^reddit\.com(\/|$)/.test(host)) return "reddit";
   if (/^github\.com(\/|$)/.test(host)) return "github";
+  if (/^threads\.(net|com)(\/|$)/.test(host)) return "threads";
   return /^[^\s/]+\.[a-z]{2,}/.test(host) ? "site" : null;
 }
 
@@ -1288,6 +1621,7 @@ export function mapSource(raw?: string): string | undefined {
   if (k.startsWith("reddit") || k.startsWith("prowlo") || k.includes("reddit")) return "reddit";
   if (k.startsWith("email") || k.startsWith("e-mail") || k === "mail") return "email";
   if (k.startsWith("linkedin")) return "linkedin";
+  if (k.startsWith("threads")) return "threads";
   if (k === "x" || k.startsWith("x_") || k.startsWith("x-") || k.startsWith("twitter")) return "x";
   if (k.startsWith("handoff_") || k.startsWith("web")) return "web";
   return k;
@@ -1315,7 +1649,7 @@ const num = (v: string | undefined, warnings: string[], field: string) => {
 /** Pure parsing of one CSV row (exported for tests). */
 export function parseImportRow(r: Record<string, string>, warnings: string[] = []) {
   const v = (k: string) => (r[k] ?? "").trim() || undefined;
-  const ids = { email: null as string | null, linkedin: null as string | null, xHandle: null as string | null, redditUser: null as string | null, github: null as string | null };
+  const ids = { email: null as string | null, linkedin: null as string | null, xHandle: null as string | null, redditUser: null as string | null, github: null as string | null, threadsHandle: null as string | null };
   const srcRaw = v("source");
   let src = mapSource(srcRaw);
   const profile = v("profile_url");
@@ -1324,31 +1658,35 @@ export function parseImportRow(r: Record<string, string>, warnings: string[] = [
   else if (kind === "linkedin") ids.linkedin = normalizeLinkedin(profile);
   else if (kind === "reddit") ids.redditUser = normalizeRedditUser(profile);
   else if (kind === "github") ids.github = normalizeGithub(profile);
+  else if (kind === "threads") ids.threadsHandle = normalizeThreadsHandle(profile);
   const website = kind === "site" ? profile! : null;
   // Ambiguous sources (web / handoff_* / missing) follow a social profile_url.
   if (kind && kind !== "site" && kind !== "github" && (!src || src === "web" || !(SOURCES as readonly string[]).includes(src))) src = kind;
   const handle = v("handle");
-  const pre = handle?.match(/^(li|linkedin|x|twitter|gh|github|reddit|rd)\s*:\s*(.+)$/i);
+  const pre = handle?.match(/^(li|linkedin|x|twitter|gh|github|reddit|rd|threads|th)\s*:\s*(.+)$/i);
   if (pre) {
     const t = pre[1]!.toLowerCase();
     const val = pre[2]!.trim();
     if (t === "li" || t === "linkedin") ids.linkedin ??= normalizeLinkedin(val);
     else if (t === "x" || t === "twitter") ids.xHandle ??= normalizeXHandle(val);
     else if (t === "gh" || t === "github") ids.github ??= normalizeGithub(val);
+    else if (t === "threads" || t === "th") ids.threadsHandle ??= normalizeThreadsHandle(val);
     else ids.redditUser ??= normalizeRedditUser(val);
     if (!Object.values(ids).some(Boolean)) warnings.push(`could not parse handle ${handle}`);
   } else if (handle && kind === "site" && !handle.startsWith("@") && !/^https?:|\.com\/|^\/?u\//i.test(handle) && !handle.includes("@")) {
     // A bare handle next to a personal/company website is a site slug, not an X handle.
   } else if (handle) {
     if (isRedditRef(handle)) ids.redditUser ??= normalizeRedditUser(handle.replace(/^@/, ""));
-    else if (/^https?:|\.com\//i.test(handle)) {
+    else if (/^https?:|\.com\/|threads\.net\//i.test(handle)) {
       const e = extractIdentities(handle);
       ids.xHandle ??= e.x[0] ?? null;
       ids.linkedin ??= e.linkedin[0] ?? null;
       ids.redditUser ??= e.reddit[0] ?? null;
       ids.github ??= e.github[0] ?? null;
+      ids.threadsHandle ??= e.threads[0] ?? null;
     } else if (src === "reddit" || /^\/?u\//i.test(handle)) ids.redditUser ??= normalizeRedditUser(handle);
     else if (src === "linkedin") ids.linkedin ??= normalizeLinkedin(handle);
+    else if (src === "threads") ids.threadsHandle ??= normalizeThreadsHandle(handle);
     else if (handle.includes("@") && !handle.startsWith("@")) ids.email ??= normalizeEmail(handle);
     else ids.xHandle ??= normalizeXHandle(handle);
     if (!Object.values(ids).some(Boolean)) warnings.push(`could not parse handle ${handle}`);
@@ -1366,13 +1704,14 @@ export function parseImportRow(r: Record<string, string>, warnings: string[] = [
   take("github", ex.github, "github");
   take("redditUser", ex.reddit, "reddit");
   take("xHandle", ex.x, "x");
+  take("threadsHandle", ex.threads, "threads");
   if (!src || !(SOURCES as readonly string[]).includes(src)) {
-    const inferred = ids.xHandle ? "x" : ids.linkedin ? "linkedin" : ids.redditUser ? "reddit" : ids.email ? "email" : "web";
+    const inferred = ids.xHandle ? "x" : ids.linkedin ? "linkedin" : ids.redditUser ? "reddit" : ids.threadsHandle ? "threads" : ids.email ? "email" : "web";
     if (src) warnings.push(`unknown source ${src}; using ${inferred}`);
     src = inferred;
   }
   const source = src as (typeof SOURCES)[number];
-  const channel: OutreachChannel | undefined = source === "x" || source === "linkedin" || source === "reddit" ? source : ids.email ? "email" : undefined;
+  const channel: OutreachChannel | undefined = source === "x" || source === "linkedin" || source === "reddit" || source === "threads" ? source : ids.email ? "email" : undefined;
   const statusRaw = v("status") ?? v("stage");
   const mapped = mapStatus(statusRaw);
   if (!mapped.known) warnings.push(`unknown status ${statusRaw}; using new`);
@@ -1417,6 +1756,15 @@ export function parseImportRow(r: Record<string, string>, warnings: string[] = [
 }
 
 export const TOOL_DESCRIPTIONS: Record<keyof typeof schemas, string> = {
+  linkedin_connected_no_first_message: "Contacts whose LinkedIn channel is connected for >= days (since connection_accepted, else last touch) with no outbound LinkedIn message or sent draft since acceptance.",
+  mark_draft_sent: "Mark a draft sent, found by draft_id, intent_url, post_id (tweet id/URL it replies to) or external_id/url of the sent message. Logs a touch, sets the channel to contacted (unless further), last_touch_at, and the per-channel default follow-up. Returns already_sent on repeats.",
+  sync_sent: "Bulk mark_draft_sent: items[] of the same args; per-item results; idempotent (already_sent on repeats).",
+  record_event: "Record reply_received | email_reply | connection_accepted | meeting_booked | connection_requested on a channel (external_id deduped per org+channel+type). Contact by contact_id, any identity, or thread_id. Advances the channel stage (never out of paying/lost/do_not_contact); reply->responded (clears follow-up, next_step 'reply'), accepted->connected (+'send first message', follow-up today), meeting->call_booked.",
+  find_by_thread: "Find the contact owning a thread (tweet conversation/status id, gmail threadId, reddit post id) on a channel, via touches, drafts or events.",
+  get_followup_rules: "Per-org follow-up days after contact (default x 3, linkedin 5, email 4, reddit 4) and stale days (x 6, linkedin 10, email 8, reddit 8).",
+  set_followup_rules: "Admin: change per-channel followup_days and/or stale_days for the org.",
+  bulk_update_stage: "Bulk stage set: items[] of {contact_id, channel?, stage}. With channel sets that channel's stage exactly; without, the overall stage. Per-item results.",
+  daily_overview: "Today's (Asia/Saigon) work: follow-ups due, LinkedIn connected awaiting first message, new replies/events in 24h, pending drafts, X pacing, stale flags, goal progress, stage counts.",
   search_contacts: "Search contacts in this org by text (name, email, role, handles, company), stage, company or tag.",
   get_contact: "Get one contact with company, tags, per-channel states, drafts, recent touches, open tasks and notes.",
   upsert_contact:
@@ -1453,9 +1801,10 @@ export const TOOL_DESCRIPTIONS: Record<keyof typeof schemas, string> = {
   export_csv: "Export contacts as CSV (import columns first, then ids, identities and per-channel stage/follow-up).",
 };
 /** Tools that need admin (or owner) on top of crm:write. */
-export const ADMIN_CRM_TOOLS = new Set<string>(["add_competitor", "update_competitor", "remove_competitor", "purge_competitors", "upsert_campaign"]);
+export const ADMIN_CRM_TOOLS = new Set<string>(["add_competitor", "update_competitor", "remove_competitor", "purge_competitors", "upsert_campaign", "set_followup_rules"]);
 export const TOOL_NAMES = Object.keys(schemas) as (keyof typeof schemas)[];
 export const WRITE_TOOLS = new Set<keyof typeof schemas>([
   "upsert_contact", "upsert_company", "log_touch", "update_stage", "create_task", "complete_task", "add_note",
   "add_competitor", "update_competitor", "remove_competitor", "purge_competitors", "set_channel_state", "create_draft", "transition_draft", "upsert_campaign", "import_leads_csv",
+  "mark_draft_sent", "sync_sent", "record_event", "set_followup_rules", "bulk_update_stage",
 ]);
