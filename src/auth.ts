@@ -4,7 +4,7 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { jwt, organization } from "better-auth/plugins";
 import { apiKey } from "@better-auth/api-key";
 import { mcp } from "@better-auth/mcp";
-import { count, eq } from "drizzle-orm";
+import { and, count, eq, gt } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import * as schema from "./db/schema";
 import { acceptUrl, deliverInvite } from "./invites";
@@ -17,6 +17,20 @@ export interface AuthEnv {
   DB: D1Database;
   BETTER_AUTH_SECRET: string;
   BETTER_AUTH_URL: string;
+  ALLOWED_SIGNUP_EMAILS?: string;
+}
+
+/** Whether `email` may create an account. See Env.ALLOWED_SIGNUP_EMAILS. */
+export async function signupAllowed(d1: D1Database, email: string, allowlist = ""): Promise<boolean> {
+  const e = email.trim().toLowerCase();
+  const rules = allowlist.split(",").map((r) => r.trim().toLowerCase()).filter(Boolean);
+  if (rules.includes("*")) return true;
+  if (rules.some((r) => (r.startsWith("@") ? e.endsWith(r) : e === r))) return true;
+  const db = drizzle(d1, { schema });
+  const [users] = await db.select({ n: count() }).from(schema.user);
+  if ((users?.n ?? 0) === 0) return true; // first owner
+  const [inv] = await db.select({ n: count() }).from(schema.invitation).where(and(eq(schema.invitation.email, e), eq(schema.invitation.status, "pending"), gt(schema.invitation.expiresAt, new Date())));
+  return (inv?.n ?? 0) > 0;
 }
 
 /** Seats = human members. Throws if adding one more would exceed the org's seat_limit (null = unlimited). */
@@ -101,6 +115,15 @@ export function authOptions(baseURL: string, d1?: D1Database) {
 export function createAuth(env: AuthEnv) {
   return betterAuth({
     ...authOptions(env.BETTER_AUTH_URL, env.DB),
+    databaseHooks: {
+      user: {
+        create: {
+          before: async (u) => {
+            if (!(await signupAllowed(env.DB, u.email, env.ALLOWED_SIGNUP_EMAILS))) throw new APIError("FORBIDDEN", { message: "sign-up is invite-only" });
+          },
+        },
+      },
+    },
     secret: env.BETTER_AUTH_SECRET,
     database: drizzleAdapter(drizzle(env.DB, { schema }), { provider: "sqlite", schema }),
   });

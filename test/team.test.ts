@@ -214,3 +214,18 @@ describe("teams: cross-org isolation", () => {
     expect((await call(ownerA, "list_api_keys")).api_keys).toHaveLength(1);
   });
 });
+
+describe("sign-up guard", () => {
+  it("allowlist, pending invite, otherwise invite-only", async () => {
+    const { signupAllowed } = await import("../src/auth");
+    expect(await signupAllowed(env.DB, "x@test.dev", "@test.dev")).toBe(true);
+    expect(await signupAllowed(env.DB, "Boss@Corp.io", "boss@corp.io, @other.io")).toBe(true);
+    expect(await signupAllowed(env.DB, "anyone@corp.io", "*")).toBe(true);
+    await signUp("someone"); // ensure users exist
+    expect(await signupAllowed(env.DB, "stranger@corp.io", "")).toBe(false);
+    const o = await newOrg("guard");
+    await call(userCtx(o.orgId, o.owner.id, "owner"), "invite_member", { email: "invited@corp.io" });
+    expect(await signupAllowed(env.DB, "invited@corp.io", "")).toBe(true);
+    await expect(auth.api.signUpEmail({ body: { email: "stranger@corp.io", password: "correct-horse-battery", name: "s" } })).rejects.toThrow();
+  });
+});

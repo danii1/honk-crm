@@ -11,6 +11,7 @@ export default defineConfig({
           TEST_MIGRATIONS: await readD1Migrations(path.join(import.meta.dirname, "migrations")),
           BETTER_AUTH_SECRET: "test-secret-0123456789abcdef0123456789",
           BETTER_AUTH_URL: "http://localhost",
+          ALLOWED_SIGNUP_EMAILS: "@test.dev",
         },
       },
     })),

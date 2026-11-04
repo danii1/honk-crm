@@ -5,12 +5,12 @@
   "compatibility_date": "2026-11-01",
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
-  "vars": { "BETTER_AUTH_URL": "http://localhost:5173" },
+  "vars": { "BETTER_AUTH_URL": "https://outreach-crm.daniil-pokrovsky.workers.dev" },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "outreach-crm",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "1645f13f-75bd-48af-99ae-422bc726a043",
       "migrations_dir": "migrations"
     }
   ]

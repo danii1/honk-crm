@@ -142,12 +142,21 @@ conflict, per-org), activity log (coverage, no rows on replay, DB-level immutabi
 Edit `src/db/schema.ts` → `bun run db:generate` → `bun run db:migrate:local`. Better Auth tables live in
 `src/db/auth-schema.ts`, regenerate with `bunx auth@latest generate --config auth.cli.ts --output src/db/auth-schema.ts --yes`.
 
-## Deploy (later — not done)
+## Deploy
+Live: **https://outreach-crm.daniil-pokrovsky.workers.dev** (D1 `outreach-crm`, id in `wrangler.jsonc`;
+`BETTER_AUTH_URL` var = that URL; `BETTER_AUTH_SECRET` is a Worker secret; local dev overrides the URL in `.dev.vars`).
 ```bash
-bunx wrangler login
-bunx wrangler d1 create outreach-crm                 # paste database_id into wrangler.jsonc
-# set vars.BETTER_AUTH_URL in wrangler.jsonc to the public URL (e.g. https://crm.example.com)
-bunx wrangler secret put BETTER_AUTH_SECRET
-bunx wrangler d1 migrations apply DB --remote
+bunx wrangler d1 migrations apply outreach-crm --remote
 bun run deploy
 ```
+
+### Sign-up guard (`ALLOWED_SIGNUP_EMAILS`)
+Comma-separated emails or `@domain` entries (`*` = open sign-up). When unset (the default): the **first** account
+(the bootstrap owner) may sign up, after that only emails with a pending invite. Set it with
+`bunx wrangler secret put ALLOWED_SIGNUP_EMAILS` (or as a var) to pin the first owner before bootstrapping.
+
+### First owner
+```bash
+bun scripts/bootstrap.ts --url https://outreach-crm.daniil-pokrovsky.workers.dev --email <you> --password '<long>' --org "Sales"
+```
+Signs up (first user), creates the org (you = owner) and prints an admin `ocrm_…` key. Everyone else: `invite_member`.
