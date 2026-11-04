@@ -6,9 +6,8 @@ import { CrmError, type OrgContext } from "./context";
 import type { Env } from "./env";
 import { handleMcp } from "./mcp";
 import { AuthError, resolveOrgContext, resolveUser } from "./middleware";
-import { acceptInvitePage, consentPage, homePage, signInPage } from "./pages";
+import { acceptInvitePage, consentPage, signInPage } from "./pages";
 import { createDb, type DB } from "./repository";
-import { contactPage, contactsPage, overviewPage } from "./dashboard";
 import { CrmService } from "./service";
 import { acceptInvite, switchOrg } from "./team";
 import { callTool, TOOL_INDEX } from "./tools";
@@ -48,8 +47,8 @@ app.get("/.well-known/oauth-protected-resource*", (c) =>
   }),
 );
 
-// ---- minimal pages for the OAuth login/consent hop + a read-only home
-app.get("/", (c) => c.html(homePage()));
+// ---- minimal pages for the OAuth login/consent hop
+app.get("/", (c) => c.redirect("/dashboard"));
 app.get("/sign-in", (c) => c.html(signInPage()));
 app.get("/consent", (c) => c.html(consentPage()));
 
@@ -97,7 +96,9 @@ app.post("/v1/:tool", async (c) => {
   return c.json(await callTool(tool, body, c.get("db"), c.get("org"), teamDeps(c)));
 });
 
-// ---- read-only dashboard (Better Auth session; any role incl. viewer)
+// ---- React SPA (shadcn/ui) served after the same Better Auth session check
+const SPA_FALLBACK = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Outreach CRM</title></head><body><div id="root"></div><p style="font:14px system-ui;padding:24px">The CRM client is not built. Run <code>bun run build</code> and reload.</p></body></html>`;
+
 const dashAuth = createMiddleware<{ Bindings: Env; Variables: Vars }>(async (c, next) => {
   try {
     c.set("org", await resolveOrgContext(c.req.raw, c.get("auth"), c.get("db"), mcpResource(c.env)));
@@ -108,18 +109,40 @@ const dashAuth = createMiddleware<{ Bindings: Env; Variables: Vars }>(async (c, 
   }
   await next();
 });
+
+/** Serve the built index.html through the static-assets binding, keeping auth in front of every page. */
+async function serveApp(c: { env: Env; req: { url: string; raw: Request } }) {
+  try {
+    const res = await c.env.ASSETS?.fetch(new URL("/index.html", c.req.url));
+    if (res?.ok) {
+      const headers = new Headers(res.headers);
+      headers.set("content-type", "text/html; charset=utf-8");
+      headers.set("cache-control", "no-store");
+      return new Response(res.body, { status: 200, headers });
+    }
+  } catch {
+    // fall through to the diagnostic shell (dev/test without a client build)
+  }
+  return new Response(SPA_FALLBACK, { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+}
+
 app.use("/dashboard", dashAuth);
 app.use("/dashboard/*", dashAuth);
 const svcOf = (c: { get: (k: "db" | "org") => unknown }) => new CrmService(c.get("db") as DB, c.get("org") as OrgContext);
-app.get("/dashboard", async (c) => c.html(await overviewPage(svcOf(c))));
-app.get("/dashboard/contacts", async (c) => c.html(await contactsPage(svcOf(c), c.req.query())));
-app.get("/dashboard/contacts/:id", async (c) => {
-  try {
-    return c.html(await contactPage(svcOf(c), c.req.param("id")));
-  } catch (e) {
-    if (e instanceof CrmError && e.code === "not_found") return c.html("<p>Contact not found. <a href='/dashboard/contacts'>Back</a></p>", 404);
-    throw e;
-  }
-});
+
+// Keep server-side 404s for detail pages; the SPA handles the rest of the routing.
+for (const base of ["contacts", "leads"] as const) {
+  app.get(`/dashboard/${base}/:id`, async (c) => {
+    try {
+      await svcOf(c).get_contact({ id: c.req.param("id") });
+      return serveApp(c);
+    } catch (e) {
+      if (e instanceof CrmError && e.code === "not_found") return c.html("<p>Contact not found. <a href='/dashboard/contacts'>Back</a></p>", 404);
+      throw e;
+    }
+  });
+}
+app.get("/dashboard", serveApp);
+app.get("/dashboard/*", serveApp);
 
 export default app;

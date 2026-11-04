@@ -68,9 +68,9 @@ export const IDENTITY_KINDS: IdentityKind[] = [
   { kind: "email", channel: "email", label: "Email", legacyColumn: "email", legacyArg: "email", normalize: (v) => normalizeEmail(v.replace(/^mailto:/i, "")), profileUrl: (v) => `mailto:${v}` },
   { kind: "linkedin_url", channel: "linkedin", label: "LinkedIn", legacyColumn: "linkedin", legacyArg: "linkedin_url", normalize: (v) => normalizeLinkedin(v), url: (b) => (/^([a-z]{2}\.)?linkedin\.com\//i.test(b) ? (normalizeLinkedin(b) ? { value: normalizeLinkedin(b)! } : null) : null), profileUrl: (v) => `https://${v}` },
   { kind: "x_handle", channel: "x", label: "X", legacyColumn: "xHandle", legacyArg: "x_handle", normalize: (v) => normalizeXHandle(v), url: (b) => (/^(x|twitter)\.com\//i.test(b) ? (normalizeXHandle(b) ? { value: normalizeXHandle(b)! } : null) : null), profileUrl: (v) => `https://x.com/${v}` },
-  { kind: "reddit_user", channel: "reddit", label: "Reddit", legacyColumn: "redditUser", legacyArg: "reddit_user", normalize: (v) => normalizeRedditUser(v), url: (b) => (/^([a-z]+\.)?reddit\.com\/(u|user)\//i.test(b) ? (normalizeRedditUser(b) ? { value: normalizeRedditUser(b)! } : null) : null), profileUrl: (v) => `https://reddit.com/user/${v}` },
+  { kind: "reddit_user", channel: "reddit", label: "Reddit", legacyColumn: "redditUser", legacyArg: "reddit_user", normalize: (v) => normalizeRedditUser(v), url: (b) => (/^([a-z]+\.)?reddit\.com\/(u|user)\//i.test(b) ? (normalizeRedditUser(b) ? { value: normalizeRedditUser(b)! } : null) : null), profileUrl: (v) => `https://www.reddit.com/user/${v}` },
   { kind: "github", channel: "github", label: "GitHub", legacyColumn: "github", legacyArg: "github", normalize: (v) => normalizeGithub(v), url: (b) => (/^github\.com\//i.test(b) ? (normalizeGithub(b) ? { value: normalizeGithub(b)! } : null) : null), profileUrl: (v) => `https://github.com/${v}` },
-  { kind: "threads_handle", channel: "threads", label: "Threads", legacyColumn: "threadsHandle", legacyArg: "threads_handle", normalize: (v) => normalizeThreadsHandle(v), url: (b) => (/^threads\.(net|com)\//i.test(b) ? (normalizeThreadsHandle(b) ? { value: normalizeThreadsHandle(b)! } : null) : null), profileUrl: (v) => `https://www.threads.net/@${v}` },
+  { kind: "threads_handle", channel: "threads", label: "Threads", legacyColumn: "threadsHandle", legacyArg: "threads_handle", normalize: (v) => normalizeThreadsHandle(v), url: (b) => (/^threads\.(net|com)\//i.test(b) ? (normalizeThreadsHandle(b) ? { value: normalizeThreadsHandle(b)! } : null) : null), profileUrl: (v) => `https://www.threads.com/@${v}` },
   {
     kind: "hn_user", channel: "hackernews", label: "Hacker News",
     normalize: handle(/^[a-z0-9_-]{2,15}$/),
@@ -230,6 +230,31 @@ export class ChannelRegistry {
   display(i: { kind: string; value: string }, reveal: boolean) {
     return this.isPrivateKind(i.kind) && !reveal ? maskPhone(i.value) : i.value;
   }
+
+  /** Canonical outbound URL for an identity, or null when the registry has no URL pattern. */
+  profileUrl(kind: string, value: string, scope = ""): string | null {
+    const k = this.kIdx.get(kind);
+    if (!k?.profileUrl || !value) return null;
+    try {
+      return k.profileUrl(value, scope) || null;
+    } catch {
+      return null;
+    }
+  }
 }
 
 export const BUILTIN_REGISTRY = new ChannelRegistry();
+
+/** Build a profile URL from the channel registry (no hard-coded social URL rules in the UI). */
+export function profileUrl(kind: string, value: string, scope = "", registry: ChannelRegistry = BUILTIN_REGISTRY): string | null {
+  return registry.profileUrl(kind, value, scope);
+}
+
+/** Normalize a website/company domain into a safe outbound https URL. */
+export function websiteUrl(value?: string | null): string | null {
+  const v = value?.trim();
+  if (!v) return null;
+  if (/^https?:\/\//i.test(v)) return v;
+  if (/^mailto:/i.test(v)) return v;
+  return `https://${v.replace(/^\/\//, "")}`;
+}

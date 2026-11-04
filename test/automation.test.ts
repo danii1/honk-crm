@@ -218,13 +218,18 @@ describe("dashboard + /v1/overview", () => {
     const page = await SELF.fetch("http://localhost/dashboard", { headers: { cookie } });
     expect(page.status).toBe(200);
     const html = await page.text();
-    expect(html).toContain("Follow-ups due");
-    expect(html).toContain("X pacing");
-    const list = await (await SELF.fetch("http://localhost/dashboard/contacts?stage=new", { headers: { cookie } })).text();
-    expect(list).toContain("Olga &lt;script&gt;");
-    expect(list).not.toContain("<script>");
-    const detail = await SELF.fetch(`http://localhost/dashboard/contacts/${contact.id}`, { headers: { cookie } });
-    expect(await detail.text()).toContain("Timeline");
+    expect(html).toContain('id="root"');
+    expect(html).toContain("Outreach CRM");
+    const list = await SELF.fetch("http://localhost/dashboard/leads?stage=new", { headers: { cookie } });
+    expect(list.status).toBe(200);
+    expect(await list.text()).toContain('id="root"');
+    const detail = await SELF.fetch(`http://localhost/dashboard/leads/${contact.id}`, { headers: { cookie } });
+    expect(detail.status).toBe(200);
     expect((await SELF.fetch("http://localhost/dashboard/contacts/nope", { headers: { cookie } })).status).toBe(404);
+
+    const view = await (await SELF.fetch("http://localhost/v1/list_contacts_view", { method: "POST", headers: { "x-api-key": key.key, "content-type": "application/json" }, body: JSON.stringify({ lifecycle: "lead" }) })).json<{ contacts: { name: string; lifecycle: string; identities: { kind: string; url: string | null }[] }[]; counts: { lead: number; contact: number } }>();
+    expect(view.counts.lead).toBe(1);
+    expect(view.contacts[0]).toMatchObject({ name: "Olga <script>", lifecycle: "lead" });
+    expect(view.contacts[0]!.identities.find((i) => i.kind === "x_handle")?.url).toBe("https://x.com/olga");
   });
 });

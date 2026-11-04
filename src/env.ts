@@ -1,5 +1,7 @@
 export interface Env {
   DB: D1Database;
+  /** Static assets binding (built SPA). Optional in tests / standalone worker runs. */
+  ASSETS?: Fetcher;
   BETTER_AUTH_SECRET: string;
   /** Public origin of this worker, e.g. http://localhost:5173 or https://crm.example.com */
   BETTER_AUTH_URL: string;

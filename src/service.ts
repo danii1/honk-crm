@@ -9,7 +9,8 @@ import { advance, defaultMatchMode, DRAFT_TRANSITIONS, matchBlocklist, normalize
 import { extractIdentities, mapStatus, parseCsvObjects, toCsv } from "./csv";
 import { Repository, type DB } from "./repository";
 import { atLeast } from "./roles";
-import { BUILTIN_CHANNELS, BUILTIN_REGISTRY, CHANNEL_ID_RE, ChannelRegistry, LEGACY_EXPORT_CHANNELS, KIND_INDEX, type Identity } from "./channels";
+import { BUILTIN_CHANNELS, BUILTIN_REGISTRY, CHANNEL_ID_RE, ChannelRegistry, LEGACY_EXPORT_CHANNELS, KIND_INDEX, websiteUrl, type Identity } from "./channels";
+import { LIFECYCLES, lifecycleCounts, lifecycleOf } from "./lifecycle";
 
 // ---------- input schemas (shared by MCP tools and REST routes)
 const idem = z.string().min(8).max(200).optional().describe("Idempotency key; retries with the same key return the original result");
@@ -246,12 +247,29 @@ export const schemas = {
   list_campaigns: z.object({}),
   list_contacts: z.object({
     stage: z.enum(STAGES).optional().describe("Overall stage"),
+    lifecycle: z.enum(LIFECYCLES).optional().describe("lead = still prospecting, contact = relationship (responded+), archived = lost/do_not_contact. Ignored when stage is set."),
     channel: chan.optional(),
     channel_stage: z.enum(STAGES).optional().describe("Stage on `channel` (or any channel)"),
     source: sourceArg.optional(),
     campaign_id: z.string().optional(),
     contact_type: z.enum(CONTACT_TYPES).optional(),
+    query: z.string().optional().describe("Search name, email, role, handles, identities or company"),
     limit: z.number().int().min(1).max(500).default(100),
+  }),
+  list_contacts_view: z.object({
+    lifecycle: z.enum(LIFECYCLES).optional().describe("lead | contact | archived; omit for all"),
+    stage: z.enum(STAGES).optional(),
+    channel: chan.optional(),
+    channel_stage: z.enum(STAGES).optional(),
+    source: sourceArg.optional(),
+    campaign_id: z.string().optional(),
+    contact_type: z.enum(CONTACT_TYPES).optional(),
+    query: z.string().optional(),
+    limit: z.number().int().min(1).max(1000).default(500),
+  }),
+  list_companies: z.object({
+    query: z.string().optional(),
+    limit: z.number().int().min(1).max(500).default(200),
   }),
   due_followups: z.object({
     today: z.string().optional().describe("YYYY-MM-DD or ISO time in `tz`; defaults to now"),
@@ -421,7 +439,22 @@ export class CrmService {
   async identitiesView(contactId: string, includePrivate = false) {
     const reg = await this.registry();
     const reveal = includePrivate && atLeast(this.ctx.role, "admin");
-    return (await this.repo.identitiesFor(contactId)).map((r) => ({ kind: r.kind, channel: reg.kind(r.kind)?.channel ?? r.kind, value: reg.display({ kind: r.kind, value: r.valueNormalized }, reveal), scope: r.scope || undefined, private: reg.isPrivateKind(r.kind) || undefined }));
+    return (await this.repo.identitiesFor(contactId)).map((r) => this.identityRow(reg, r, reveal));
+  }
+
+  private identityRow(reg: ChannelRegistry, r: { kind: string; valueNormalized: string; scope: string }, reveal: boolean) {
+    const kind = reg.kind(r.kind);
+    const privateKind = reg.isPrivateKind(r.kind);
+    const visible = !privateKind || reveal;
+    return {
+      kind: r.kind,
+      channel: kind?.channel ?? r.kind,
+      label: kind?.label ?? r.kind,
+      value: reg.display({ kind: r.kind, value: r.valueNormalized }, reveal),
+      scope: r.scope || undefined,
+      private: privateKind || undefined,
+      url: visible ? reg.profileUrl(r.kind, r.valueNormalized, r.scope) : null,
+    };
   }
 
   /** Replays a stored response for a repeated key; rejects a reused key with a different payload. */
@@ -453,7 +486,7 @@ export class CrmService {
     const { id } = await this.parse("get_contact", raw);
     const contact = await this.repo.contactById(id);
     if (!contact) throw new CrmError("not_found", `contact ${id} not found`);
-    const [company, touches, tasks, notes, tags, channel_states, drafts] = await Promise.all([
+    const [company, touches, tasks, notes, tags, channel_states, drafts, events] = await Promise.all([
       contact.companyId ? this.repo.companyById(contact.companyId) : undefined,
       this.repo.touchesForContact(id),
       this.repo.openTasksForContact(id),
@@ -461,10 +494,23 @@ export class CrmService {
       this.repo.tagsForContact(id),
       this.repo.channelStatesFor(id),
       this.repo.listDrafts({ contactId: id, limit: 50 }),
+      this.repo.eventsForContact(id),
     ]);
     const include = (raw as { include_private?: boolean }).include_private === true;
     if (include) requireRole(this.ctx, "admin");
-    return { ...contact, company: company ?? null, identities: await this.identitiesView(id, include), tags, channel_states, drafts, touches, open_tasks: tasks, notes };
+    return {
+      ...contact,
+      lifecycle: lifecycleOf(contact.stage),
+      company: company ? { ...company, website_url: websiteUrl(company.website ?? company.domain) } : null,
+      identities: await this.identitiesView(id, include),
+      tags,
+      channel_states,
+      drafts,
+      touches,
+      events,
+      open_tasks: tasks,
+      notes,
+    };
   }
 
   async list_due_followups(raw: Input<"list_due_followups">) {
@@ -485,7 +531,7 @@ export class CrmService {
     const by = Object.fromEntries(STAGES.map((st) => [st, 0])) as Record<(typeof STAGES)[number], number>;
     for (const c of counts) by[c.stage] = Number(c.count);
     const due = await this.repo.openTasksDueBy(new Date(), 500);
-    return { stages: by, total: Object.values(by).reduce((a, b) => a + b, 0), due_followups: due.length };
+    return { stages: by, lifecycles: lifecycleCounts(by), total: Object.values(by).reduce((a, b) => a + b, 0), due_followups: due.length };
   }
 
   // ---------- writes
@@ -1295,7 +1341,48 @@ export class CrmService {
   async list_contacts(raw: Input<"list_contacts">) {
     requireScope(this.ctx, "crm:read");
     const i = await this.parse("list_contacts", raw);
-    return this.repo.listContacts({ stage: i.stage, source: i.source, campaignId: i.campaign_id, contactType: i.contact_type, channel: i.channel, channelStage: i.channel_stage, limit: i.limit });
+    return this.repo.listContacts({ stage: i.stage, lifecycle: i.lifecycle, source: i.source, campaignId: i.campaign_id, contactType: i.contact_type, channel: i.channel, channelStage: i.channel_stage, query: i.query, limit: i.limit });
+  }
+
+  /** List rows plus company and linked identities (the dashboard list views). */
+  async list_contacts_view(raw: Input<"list_contacts_view">) {
+    requireScope(this.ctx, "crm:read");
+    const i = await this.parse("list_contacts_view", raw);
+    const [rows, stages, reg] = await Promise.all([
+      this.repo.listContactsView({ stage: i.stage, lifecycle: i.lifecycle, source: i.source, campaignId: i.campaign_id, contactType: i.contact_type, channel: i.channel, channelStage: i.channel_stage, query: i.query, limit: i.limit }),
+      this.repo.stageCounts(),
+      this.registry(),
+    ]);
+    const by = Object.fromEntries(STAGES.map((st) => [st, 0])) as Record<(typeof STAGES)[number], number>;
+    for (const c of stages) by[c.stage] = Number(c.count);
+    return {
+      contacts: rows.map((c) => ({
+        ...c,
+        lifecycle: lifecycleOf(c.stage),
+        company: c.company ? { ...c.company, website_url: websiteUrl(c.company.website ?? c.company.domain) } : null,
+        identities: c.identities.map((r) => this.identityRow(reg, r, false)),
+      })),
+      counts: { ...lifecycleCounts(by), stages: by },
+    };
+  }
+
+  async list_companies(raw: Input<"list_companies">) {
+    requireScope(this.ctx, "crm:read");
+    const i = await this.parse("list_companies", raw);
+    const [companies, contacts] = await Promise.all([this.repo.listCompanies({ query: i.query, limit: i.limit }), this.repo.allContacts()]);
+    return {
+      companies: companies.map((c) => {
+        const people = contacts.filter((x) => x.companyId === c.id);
+        return {
+          ...c,
+          website_url: websiteUrl(c.website ?? c.domain),
+          contacts: people.length,
+          leads: people.filter((x) => lifecycleOf(x.stage) === "lead").length,
+          relationships: people.filter((x) => lifecycleOf(x.stage) === "contact").length,
+        };
+      }),
+      total: companies.length,
+    };
   }
 
   async due_followups(raw: Input<"due_followups">) {
@@ -1707,7 +1794,14 @@ export class CrmService {
         const co = c.companyId ? cos.get(c.companyId) : undefined;
         const st = (ch: string) => states.find((s) => s.contactId === c.id && s.channel === ch);
         const handle = c.source === "reddit" ? c.redditUser : c.source === "linkedin" ? c.linkedin : c.source === "threads" && c.threadsHandle ? `threads:@${c.threadsHandle}` : c.xHandle ? `@${c.xHandle}` : (c.redditUser ?? c.github ?? extraHandle(c.id));
-        const derived = c.source === "linkedin" || (!c.xHandle && c.linkedin) ? (c.linkedin ? `https://${c.linkedin}` : "") : c.source === "threads" && c.threadsHandle ? `https://www.threads.net/@${c.threadsHandle}` : c.xHandle ? `https://x.com/${c.xHandle}` : c.threadsHandle ? `https://www.threads.net/@${c.threadsHandle}` : c.redditUser ? `https://reddit.com/user/${c.redditUser}` : "";
+        const derived =
+          (c.source === "linkedin" || !c.xHandle) && c.linkedin
+            ? (reg.profileUrl("linkedin_url", c.linkedin) ?? "")
+            : (c.source === "threads" && c.threadsHandle && reg.profileUrl("threads_handle", c.threadsHandle)) ||
+              (c.xHandle && reg.profileUrl("x_handle", c.xHandle)) ||
+              (c.threadsHandle && reg.profileUrl("threads_handle", c.threadsHandle)) ||
+              (c.redditUser && reg.profileUrl("reddit_user", c.redditUser)) ||
+              "";
         const profile = i.derived_profile_url ? derived || c.profileUrl : (c.profileUrl ?? derived);
         return [
           handle, c.name, profile, c.bioSummary, c.followers, co?.name, c.role, c.estTeamSize, c.signalPostUrl, c.signalDate, c.signalSummary, c.score, c.source,
@@ -1956,7 +2050,9 @@ export const TOOL_DESCRIPTIONS: Record<keyof typeof schemas, string> = {
   list_drafts: "List drafts by state/channel/contact/campaign (e.g. state=approved for the send queue).",
   upsert_campaign: "Create or update a campaign (name unique; offer_text, status). Link contacts via upsert_contact.campaign_id and drafts via create_draft.campaign_id.",
   list_campaigns: "List campaigns.",
-  list_contacts: "List contacts filtered by overall stage, channel and channel_stage, source, campaign, contact_type.",
+  list_contacts: "List contacts filtered by overall stage, lifecycle (lead/contact/archived), channel and channel_stage, source, campaign, contact_type and a text query.",
+  list_contacts_view: "Dashboard list rows: contacts with lifecycle, company, linked identities (with outbound profile URLs) and lifecycle/stage counts. Filters: lifecycle, stage, channel, channel_stage, source, campaign, contact_type, query.",
+  list_companies: "List companies with website URL and contact/lead/relationship counts; optional text query.",
   due_followups: "Channel follow-ups (next_followup_at) due by end of today in tz (default Asia/Saigon), flagged overdue, plus open tasks due.",
   stale_no_response: "Contacts contacted / connection_pending / connected on a channel with no touch for at least `days` days.",
   linkedin_needs_first_message: "LinkedIn contacts at connection_pending or connected with no outbound LinkedIn message logged yet.",

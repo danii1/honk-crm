@@ -3,6 +3,7 @@ import { drizzle, type DrizzleD1Database } from "drizzle-orm/d1";
 import * as s from "./db/schema";
 import { CrmError, type OrgContext } from "./context";
 import { LEGACY_KINDS, type CustomChannelConfig, type Identity } from "./channels";
+import { stagesForLifecycle, type Lifecycle } from "./lifecycle";
 
 export type DB = DrizzleD1Database<typeof s>;
 export const createDb = (d1: D1Database): DB => drizzle(d1, { schema: s });
@@ -85,6 +86,16 @@ export class Repository {
     const t = s.contactIdentities;
     return this.db.select().from(t).where(and(eq(t.orgId, this.orgId), eq(t.contactId, contactId))).orderBy(asc(t.kind));
   }
+  /** Identities for many contacts in one query (list views). */
+  async identitiesForMany(contactIds: string[]) {
+    if (!contactIds.length) return [];
+    const t = s.contactIdentities;
+    const out: (typeof t.$inferSelect)[] = [];
+    for (let n = 0; n < contactIds.length; n += 80) {
+      out.push(...(await this.db.select().from(t).where(and(eq(t.orgId, this.orgId), inArray(t.contactId, contactIds.slice(n, n + 80)))).orderBy(asc(t.kind))));
+    }
+    return out;
+  }
   async allIdentities() {
     return this.db.select().from(s.contactIdentities).where(eq(s.contactIdentities.orgId, this.orgId));
   }
@@ -146,15 +157,25 @@ export class Repository {
   async allCompanies() {
     return this.db.select().from(s.companies).where(eq(s.companies.orgId, this.orgId));
   }
+  async listCompanies(q: { query?: string; limit: number }) {
+    const c = s.companies;
+    const conds: (SQL | undefined)[] = [eq(c.orgId, this.orgId)];
+    if (q.query?.trim()) {
+      const p = `%${q.query.trim().toLowerCase()}%`;
+      conds.push(or(like(sql`lower(${c.name})`, p), like(c.domain, p), like(c.website, p)));
+    }
+    return this.db.select().from(c).where(and(...conds)).orderBy(asc(c.name)).limit(q.limit);
+  }
   async companyByName(name: string) {
     return this.db.query.companies.findFirst({
       where: and(eq(s.companies.orgId, this.orgId), sql`lower(${s.companies.name}) = ${name.trim().toLowerCase()}`),
     });
   }
-  async listContacts(q: { stage?: s.Stage; source?: string; campaignId?: string; contactType?: string; channel?: s.OutreachChannel; channelStage?: s.Stage; limit: number }) {
+  private contactConds(q: { stage?: s.Stage; lifecycle?: Lifecycle; source?: string; campaignId?: string; contactType?: string; channel?: s.OutreachChannel; channelStage?: s.Stage; query?: string }) {
     const c = s.contacts;
     const conds: (SQL | undefined)[] = [eq(c.orgId, this.orgId)];
     if (q.stage) conds.push(eq(c.stage, q.stage));
+    else if (q.lifecycle) conds.push(inArray(c.stage, stagesForLifecycle(q.lifecycle)));
     if (q.source) conds.push(eq(c.source, q.source as (typeof s.SOURCES)[number]));
     if (q.campaignId) conds.push(eq(c.campaignId, q.campaignId));
     if (q.contactType) conds.push(eq(c.contactType, q.contactType as (typeof s.CONTACT_TYPES)[number]));
@@ -163,7 +184,53 @@ export class Repository {
       const sub = [eq(cs.orgId, this.orgId), q.channel ? eq(cs.channel, q.channel) : undefined, q.channelStage ? eq(cs.stage, q.channelStage) : undefined];
       conds.push(inArray(c.id, this.db.select({ id: cs.contactId }).from(cs).where(and(...sub))));
     }
-    return this.db.select().from(c).where(and(...conds)).orderBy(desc(c.updatedAt)).limit(q.limit);
+    if (q.query?.trim()) {
+      const p = `%${q.query.trim().toLowerCase()}%`;
+      conds.push(
+        or(
+          like(sql`lower(${c.name})`, p),
+          like(c.email, p),
+          like(sql`lower(${c.role})`, p),
+          like(c.xHandle, p),
+          like(c.github, p),
+          like(c.redditUser, p),
+          like(c.threadsHandle, p),
+          like(c.linkedin, p),
+          inArray(
+            c.id,
+            this.db.select({ id: s.contactIdentities.contactId }).from(s.contactIdentities).where(and(eq(s.contactIdentities.orgId, this.orgId), like(sql`lower(${s.contactIdentities.valueNormalized})`, p))),
+          ),
+          inArray(
+            c.companyId,
+            this.db
+              .select({ id: s.companies.id })
+              .from(s.companies)
+              .where(and(eq(s.companies.orgId, this.orgId), or(like(sql`lower(${s.companies.name})`, p), like(s.companies.domain, p)))),
+          ),
+        ),
+      );
+    }
+    return conds;
+  }
+  async listContacts(q: { stage?: s.Stage; lifecycle?: Lifecycle; source?: string; campaignId?: string; contactType?: string; channel?: s.OutreachChannel; channelStage?: s.Stage; query?: string; limit: number }) {
+    return this.db.select().from(s.contacts).where(and(...this.contactConds(q))).orderBy(desc(s.contacts.updatedAt)).limit(q.limit);
+  }
+  /** List rows with the data the dashboard needs: company, identities and lifecycle. */
+  async listContactsView(q: { stage?: s.Stage; lifecycle?: Lifecycle; source?: string; campaignId?: string; contactType?: string; channel?: s.OutreachChannel; channelStage?: s.Stage; query?: string; limit: number }) {
+    const contacts = await this.listContacts(q);
+    const ids = contacts.map((c) => c.id);
+    const companyIds = [...new Set(contacts.map((c) => c.companyId).filter((x): x is string => !!x))];
+    const [companies, identities, states] = await Promise.all([
+      companyIds.length ? this.db.select().from(s.companies).where(and(eq(s.companies.orgId, this.orgId), inArray(s.companies.id, companyIds))) : [],
+      this.identitiesForMany(ids),
+      ids.length ? this.db.select({ contactId: s.channelStates.contactId, lastTouchAt: s.channelStates.lastTouchAt }).from(s.channelStates).where(and(eq(s.channelStates.orgId, this.orgId), inArray(s.channelStates.contactId, ids))) : [],
+    ]);
+    const companyById = new Map(companies.map((c) => [c.id, c]));
+    const idsBy = new Map<string, (typeof identities)[number][]>();
+    for (const r of identities) idsBy.set(r.contactId, [...(idsBy.get(r.contactId) ?? []), r]);
+    const channelTouch = new Map<string, Date>();
+    for (const st of states) if (st.lastTouchAt && (!channelTouch.has(st.contactId) || channelTouch.get(st.contactId)! < st.lastTouchAt)) channelTouch.set(st.contactId, st.lastTouchAt);
+    return contacts.map((c) => ({ ...c, lastTouchAt: c.lastTouchAt ?? channelTouch.get(c.id) ?? null, company: c.companyId ? (companyById.get(c.companyId) ?? null) : null, identities: idsBy.get(c.id) ?? [] }));
   }
   async contactByLinkedin(linkedin: string) {
     return this.db.query.contacts.findFirst({

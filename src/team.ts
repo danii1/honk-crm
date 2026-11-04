@@ -1,4 +1,4 @@
-import { and, count, eq, gt } from "drizzle-orm";
+import { and, count, eq, gt, sql } from "drizzle-orm";
 import { z } from "zod";
 import { assertSeatAvailable, SeatLimitError, type Auth } from "./auth";
 import { CrmError, requireRole, requireScope, type OrgContext } from "./context";
@@ -299,10 +299,17 @@ export class TeamService {
     this.requireWrite("owner");
     const o = await this.org();
     if (i.confirm_slug !== o.slug) throw new CrmError("invalid", "confirm_slug does not match the org slug");
+    // The append-only trigger on activity_log cannot run during the organization cascade in
+    // workerd/D1 (it surfaces as SQLITE_CANTOPEN). Drop it for the duration of this transaction
+    // and restore it before commit; D1 batch is atomic, so other requests never see it missing.
     await this.db.batch([
+      this.db.run(sql`DROP TRIGGER IF EXISTS activity_log_no_delete`),
       this.db.delete(apikey).where(eq(apikey.referenceId, o.id)),
       this.db.update(session).set({ activeOrganizationId: null }).where(eq(session.activeOrganizationId, o.id)),
       this.db.delete(organization).where(eq(organization.id, o.id)),
+      this.db.run(sql`CREATE TRIGGER activity_log_no_delete BEFORE DELETE ON activity_log
+WHEN EXISTS (SELECT 1 FROM organization WHERE id = OLD.org_id)
+BEGIN SELECT RAISE(ABORT, 'activity_log is append-only'); END`),
     ]);
     return { deleted: true, org_id: o.id };
   }
