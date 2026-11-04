@@ -35,9 +35,30 @@ request ─► Hono (src/index.ts)
   (work-email domains auto-create/link a company; free-mail domains don't). Touches by `(channel, external_id)`.
 
 ### Tools (MCP and `POST /v1/<tool>`)
-`search_contacts, get_contact, upsert_contact, upsert_company, log_touch, update_stage, list_due_followups,
-create_task, complete_task, add_note, get_activity, pipeline_summary`. Also `GET /v1/me`.
-Pipeline stages: `new → contacted → replied → meeting → won | lost` (log_touch advances new→contacted / →replied automatically).
+Every write tool accepts `idempotency_key` (MCP) or an `Idempotency-Key` header (REST). Reusing a key with
+different input returns `conflict`. The CRM **never sends anything**; it records what you sent.
+
+| Area | Tools |
+|---|---|
+| Contacts and companies | `search_contacts`, `get_contact`, `upsert_contact`, `upsert_company`, `find_existing`, `list_contacts`, `add_note`, `get_activity` |
+| Channel state and reminders | `set_channel_state`, `log_touch`, `update_stage`, `due_followups`, `stale_no_response`, `linkedin_needs_first_message`, `list_due_followups`, `create_task`, `complete_task` |
+| Competitors | `is_competitor`, `add_competitor`, `remove_competitor`, `list_competitors` |
+| Drafts and campaigns | `create_draft`, `transition_draft`, `list_drafts`, `upsert_campaign`, `list_campaigns` |
+| Pacing and reporting | `x_pacing_today`, `outreach_report`, `pipeline_summary` |
+| CSV | `import_leads_csv` (dry run by default), `export_csv` |
+
+Also `GET /v1/me`.
+
+**Identities:** email, x_handle, linkedin_url, reddit_user and github are normalized (lowercase, URL and `@`/`u/`
+prefixes stripped) and unique per org. Company domain is unique per org.
+**Stages** (overall and per channel x/linkedin/reddit/email): `new, qualified, drafted, contacted,
+connection_pending, connected, responded, call_booked, pilot, paying, lost, do_not_contact`. Automatic moves are
+forward only; `do_not_contact` is sticky. The overall stage is the furthest channel stage. Explicit
+`set_channel_state` / `update_stage` set exactly. **Drafts:** `drafted → approved → sent`, and either one can go to
+`discarded` or back to `drafted` (to edit). Marking `sent` logs the touch, sets the channel to `contacted` and an optional
+follow-up. **Reminders** are the per-channel `next_followup_at`, read through `due_followups` (tz defaults to Asia/Saigon).
+**X pacing:** at least 60 minutes between sends and at most 8 per local day (`x_pacing_today`). **Goal:** 3 paying or 10 pilots by 2026-12-15 (`outreach_report`).
+Migration 0002 maps v1 stages: replied→responded, meeting→call_booked, won→paying.
 
 ## Local dev
 ```bash
@@ -59,6 +80,26 @@ curl -s localhost:5173/v1/pipeline_summary -X POST -H "x-api-key: ocrm_…" -d '
 * **Interactive (OAuth):** point the client at `http://localhost:5173/mcp` with no header. It gets a 401 with
   `WWW-Authenticate: Bearer resource_metadata=…`, discovers the AS, registers via DCR, sends you to `/sign-in`
   then `/consent`, and receives a JWT scoped to `crm:read crm:write`. Multi-org users must send `x-org-id`.
+
+### Sales Outbound setup (after deploy)
+1. Create the org and an API key once: `bun scripts/bootstrap.ts --url https://<crm-host> --email … --password … --org "Sales"`.
+   Keep the printed `ocrm_…` key in the agent's secret store.
+2. MCP config (Streamable HTTP):
+   ```json
+   { "mcpServers": { "crm": { "type": "http", "url": "https://<crm-host>/mcp",
+     "headers": { "Authorization": "Bearer ocrm_…" } } } }
+   ```
+   or `claude mcp add --transport http crm https://<crm-host>/mcp --header "Authorization: Bearer ocrm_…"`.
+3. Seed the competitor blocklist with `add_competitor` for each name, handle and domain.
+4. Import the existing sheet. Export it as CSV with the columns `handle,name,profile_url,bio_summary,followers,company,role,
+   est_team_size,signal_post_url,signal_post_date,signal_summary,score,source,status,first_seen,notes`, then:
+   ```bash
+   CRM_URL=https://<crm-host> CRM_API_KEY=ocrm_… bun scripts/import-leads.ts leads.csv           # dry-run report
+   CRM_URL=https://<crm-host> CRM_API_KEY=ocrm_… bun scripts/import-leads.ts leads.csv --commit  # write
+   ```
+   You can also call `import_leads_csv` over MCP with `{csv, dry_run:true}`, then `dry_run:false`. Re-runs are
+   idempotent: existing contacts are matched on any identity, stages never go backwards, and identities and notes
+   only fill blanks. Unknown `status` values become `new` and are listed in the report.
 
 ## Checks
 ```bash
