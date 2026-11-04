@@ -152,7 +152,7 @@ bun run deploy
 
 ### Sign-up guard (`ALLOWED_SIGNUP_EMAILS`)
 Comma-separated emails or `@domain` entries (`*` = open sign-up). When unset (the default): the **first** account
-(the bootstrap owner) may sign up, after that only emails with a pending invite. Set it with
+(the bootstrap owner) may sign up, after that only emails with a pending invite. When set, the first-user exception is off: only listed emails or invitees. Set it with
 `bunx wrangler secret put ALLOWED_SIGNUP_EMAILS` (or as a var) to pin the first owner before bootstrapping.
 
 ### First owner

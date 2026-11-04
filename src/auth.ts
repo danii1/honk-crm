@@ -28,7 +28,7 @@ export async function signupAllowed(d1: D1Database, email: string, allowlist = "
   if (rules.some((r) => (r.startsWith("@") ? e.endsWith(r) : e === r))) return true;
   const db = drizzle(d1, { schema });
   const [users] = await db.select({ n: count() }).from(schema.user);
-  if ((users?.n ?? 0) === 0) return true; // first owner
+  if (rules.length === 0 && (users?.n ?? 0) === 0) return true; // first owner, only when no allowlist pins it
   const [inv] = await db.select({ n: count() }).from(schema.invitation).where(and(eq(schema.invitation.email, e), eq(schema.invitation.status, "pending"), gt(schema.invitation.expiresAt, new Date())));
   return (inv?.n ?? 0) > 0;
 }

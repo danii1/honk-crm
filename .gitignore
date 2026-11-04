@@ -3,3 +3,5 @@ dist
 .wrangler
 .dev.vars
 *.log
+.owner-credentials
+.sales-outbound-key
