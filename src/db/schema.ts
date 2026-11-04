@@ -101,6 +101,8 @@ export const contacts = sqliteTable(
     contactType: text("contact_type", { enum: CONTACT_TYPES }).notNull().default("lead"),
     source: text("source", { enum: SOURCES }),
     sourceDetail: text("source_detail"), // raw source value from imports
+    profileUrl: text("profile_url"), // raw profile_url as imported/provided
+    website: text("website"), // personal/company site when profile_url is not a social profile
     bioSummary: text("bio_summary"),
     followers: integer("followers"),
     estTeamSize: integer("est_team_size"),

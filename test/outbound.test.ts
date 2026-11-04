@@ -231,7 +231,7 @@ describe("CSV import", () => {
     expect(again).toMatchObject({ created: 0, updated: 0, unchanged: 3, skipped: 2 });
     const exp = await svc.export_csv({});
     expect(exp.rows).toBe(2);
-    expect(exp.csv.split("\n")[0]!.startsWith(HEADER)).toBe(true);
+    expect(exp.csv.split("\n")[0]!.startsWith(HEADER.replace(",status,", ",stage,"))).toBe(true);
   });
 });
 

@@ -16,6 +16,9 @@ const reasonField = z.string().max(2000).optional().describe("Why the agent is d
 const date = z.string().refine((v) => !Number.isNaN(Date.parse(v)), "expected an ISO 8601 date/time").describe("ISO 8601 date/time");
 const toDate = (v: string | undefined) => (v === undefined ? undefined : new Date(v));
 
+const CLEARABLE = ["x_handle", "linkedin_url", "reddit_user", "github", "email", "profile_url", "website", "company_id"] as const;
+const CLEAR_FIELD = { x_handle: "xHandle", linkedin_url: "linkedin", reddit_user: "redditUser", github: "github", email: "email", profile_url: "profileUrl", website: "website", company_id: "companyId" } as const;
+
 export const schemas = {
   search_contacts: z.object({
     query: z.string().optional().describe("Matches name, email, title, linkedin, company name/domain"),
@@ -32,6 +35,7 @@ export const schemas = {
     title: z.string().optional().describe("Alias of role"),
     linkedin_url: z.string().optional(),
     linkedin: z.string().optional().describe("Alias of linkedin_url"),
+    contact_id: z.string().optional().describe("Update this exact contact (identities may then be changed/cleared)"),
     x_handle: z.string().optional().describe("@handle or x.com URL"),
     x: z.string().optional().describe("Alias of x_handle"),
     reddit_user: z.string().optional().describe("u/name or reddit.com/user URL"),
@@ -39,6 +43,10 @@ export const schemas = {
     campaign_id: z.string().optional(),
     contact_type: z.enum(CONTACT_TYPES).optional().describe("lead (default) or competitor. Leads matching the competitor blocklist are rejected."),
     source: z.enum(SOURCES).optional(),
+    source_detail: z.string().optional().describe("Raw source value"),
+    profile_url: z.string().optional().describe("Raw profile URL as given; stored and exported verbatim"),
+    website: z.string().optional().describe("Personal or company website (non-social URL)"),
+    clear: z.array(z.enum(CLEARABLE)).optional().describe("Fields to set to NULL (requires contact_id or a matching identity)"),
     bio_summary: z.string().optional(),
     followers: z.number().int().min(0).optional(),
     est_team_size: z.number().int().min(0).optional(),
@@ -243,6 +251,7 @@ export const schemas = {
     contact_type: z.enum(CONTACT_TYPES).optional(),
     stage: z.enum(STAGES).optional(),
     campaign_id: z.string().optional(),
+    derived_profile_url: z.boolean().default(false).describe("Export profile_url rebuilt from identities instead of the raw imported value"),
   }),
 };
 export type Input<K extends keyof typeof schemas> = z.input<(typeof schemas)[K]>;
@@ -391,9 +400,14 @@ export class CrmService {
       if (!Object.values(ids).some(Boolean) && !i.name) throw new CrmError("invalid", "need at least one identity (email, x_handle, linkedin_url, reddit_user, github) or a name");
 
       // Dedupe across every identity. Two different contacts matching = conflict the caller must resolve.
-      const matches = await this.repo.contactsByIdentity(ids);
-      if (matches.length > 1) throw new CrmError("conflict", `identities match ${matches.length} different contacts: ${matches.map((m) => m.id).join(", ")}`);
-      const existing = matches[0];
+      const found = await this.repo.contactsByIdentity(ids);
+      const pinned = i.contact_id ? await this.repo.contactById(i.contact_id) : undefined;
+      if (i.contact_id && !pinned) throw new CrmError("not_found", `contact ${i.contact_id} not found`);
+      const matches = pinned ? found.filter((m) => m.id !== pinned.id) : found;
+      if (pinned && matches.length) throw new CrmError("conflict", `identities already belong to other contacts: ${matches.map((m) => m.id).join(", ")}`);
+      if (!pinned && matches.length > 1) throw new CrmError("conflict", `identities match ${matches.length} different contacts: ${matches.map((m) => m.id).join(", ")}`);
+      const existing = pinned ?? matches[0];
+      if (i.clear?.length && !existing) throw new CrmError("invalid", "clear needs an existing contact (contact_id or matching identity)");
 
       // Company: explicit id > explicit domain > work-email domain > name.
       let companyId = i.company_id;
@@ -444,6 +458,10 @@ export class CrmService {
         ...(i.signal_post_url && { signalPostUrl: i.signal_post_url }),
         ...(i.signal_date && { signalDate: i.signal_date }),
         ...(i.signal_summary && { signalSummary: i.signal_summary }),
+        ...(i.source_detail && { sourceDetail: i.source_detail }),
+        ...(i.profile_url && { profileUrl: i.profile_url.trim() }),
+        ...(i.website && { website: i.website.trim() }),
+        ...Object.fromEntries((i.clear ?? []).map((k) => [CLEAR_FIELD[k], null])),
       };
       const stage = i.stage ? advance(existing?.stage ?? "new", i.stage) : undefined;
       let contact;
@@ -1097,6 +1115,8 @@ export class CrmService {
         scoreOriginal: p.scoreOriginal,
         source: p.source,
         sourceDetail: p.sourceDetail,
+        profileUrl: p.profileUrl,
+        website: p.website,
         firstSeenAt: p.firstSeen,
         signalPostUrl: p.signalUrl,
         signalDate: p.signalDate,
@@ -1175,15 +1195,17 @@ export class CrmService {
         const co = c.companyId ? cos.get(c.companyId) : undefined;
         const st = (ch: string) => states.find((s) => s.contactId === c.id && s.channel === ch);
         const handle = c.source === "reddit" ? c.redditUser : c.source === "linkedin" ? c.linkedin : c.xHandle ? `@${c.xHandle}` : (c.redditUser ?? c.github ?? "");
-        const profile = c.source === "linkedin" || (!c.xHandle && c.linkedin) ? (c.linkedin ? `https://${c.linkedin}` : "") : c.xHandle ? `https://x.com/${c.xHandle}` : c.redditUser ? `https://reddit.com/user/${c.redditUser}` : "";
+        const derived = c.source === "linkedin" || (!c.xHandle && c.linkedin) ? (c.linkedin ? `https://${c.linkedin}` : "") : c.xHandle ? `https://x.com/${c.xHandle}` : c.redditUser ? `https://reddit.com/user/${c.redditUser}` : "";
+        const profile = i.derived_profile_url ? derived || c.profileUrl : (c.profileUrl ?? derived);
         return [
           handle, c.name, profile, c.bioSummary, c.followers, co?.name, c.role, c.estTeamSize, c.signalPostUrl, c.signalDate, c.signalSummary, c.score, c.source,
           c.contactType === "competitor" ? "competitor" : c.stage, c.firstSeenAt?.toISOString().slice(0, 10), c.notesText,
           c.id, c.email, c.xHandle, c.linkedin, c.redditUser, c.github, co?.domain, c.contactType, c.campaignId,
           ...OUTREACH_CHANNELS.flatMap((ch) => [st(ch)?.stage, st(ch)?.nextFollowupAt?.toISOString()]),
+          c.website, c.sourceDetail, c.contactType === "competitor" ? "competitor" : c.stage,
         ];
       });
-    const header = [...IMPORT_COLUMNS, "id", "email", "x_handle", "linkedin_url", "reddit_user", "github", "company_domain", "contact_type", "campaign_id", ...OUTREACH_CHANNELS.flatMap((ch) => [`${ch}_stage`, `${ch}_next_followup_at`])];
+    const header = [...IMPORT_COLUMNS.map((h) => (h === "status" ? "stage" : h)), "id", "email", "x_handle", "linkedin_url", "reddit_user", "github", "company_domain", "contact_type", "campaign_id", ...OUTREACH_CHANNELS.flatMap((ch) => [`${ch}_stage`, `${ch}_next_followup_at`]), "website", "source_detail", "status"];
     return { rows: rows.length, csv: toCsv(header, rows) };
   }
 }
@@ -1211,6 +1233,18 @@ function localNoon(day: string, tz: string) {
   const guess = new Date(`${day}T12:00:00Z`);
   const local = localDateString(guess, tz);
   return local === day ? guess : new Date(guess.getTime() + (local < day ? 1 : -1) * 12 * 3_600_000);
+}
+
+
+/** Which identity a profile URL carries; "site" = any other website. */
+export function profileKind(url?: string): "x" | "linkedin" | "reddit" | "github" | "site" | null {
+  if (!url?.trim()) return null;
+  const host = url.trim().replace(/^https?:\/\//i, "").replace(/^(www|m|mobile|old|new)\./i, "").toLowerCase();
+  if (/^(x|twitter)\.com(\/|$)/.test(host)) return "x";
+  if (/^([a-z]{2}\.)?linkedin\.com(\/|$)/.test(host)) return "linkedin";
+  if (/^reddit\.com(\/|$)/.test(host)) return "reddit";
+  if (/^github\.com(\/|$)/.test(host)) return "github";
+  return /^[^\s/]+\.[a-z]{2,}/.test(host) ? "site" : null;
 }
 
 /** Free-form source -> canonical source. Unknown values are returned lowercased (caller infers). */
@@ -1251,13 +1285,27 @@ export function parseImportRow(r: Record<string, string>, warnings: string[] = [
   const srcRaw = v("source");
   let src = mapSource(srcRaw);
   const profile = v("profile_url");
-  const host = profile?.replace(/^https?:\/\//i, "").replace(/^www\./i, "").toLowerCase() ?? "";
-  if (/^(x|twitter)\.com\//.test(host)) ids.xHandle = normalizeXHandle(profile);
-  else if (/linkedin\.com\//.test(host)) ids.linkedin = normalizeLinkedin(profile);
-  else if (/reddit\.com\//.test(host)) ids.redditUser = normalizeRedditUser(profile);
-  else if (/github\.com\//.test(host)) ids.github = normalizeGithub(profile);
+  const kind = profileKind(profile);
+  if (kind === "x") ids.xHandle = normalizeXHandle(profile);
+  else if (kind === "linkedin") ids.linkedin = normalizeLinkedin(profile);
+  else if (kind === "reddit") ids.redditUser = normalizeRedditUser(profile);
+  else if (kind === "github") ids.github = normalizeGithub(profile);
+  const website = kind === "site" ? profile! : null;
+  // Ambiguous sources (web / handoff_* / missing) follow a social profile_url.
+  if (kind && kind !== "site" && kind !== "github" && (!src || src === "web" || !(SOURCES as readonly string[]).includes(src))) src = kind;
   const handle = v("handle");
-  if (handle) {
+  const pre = handle?.match(/^(li|linkedin|x|twitter|gh|github|reddit|rd)\s*:\s*(.+)$/i);
+  if (pre) {
+    const t = pre[1]!.toLowerCase();
+    const val = pre[2]!.trim();
+    if (t === "li" || t === "linkedin") ids.linkedin ??= normalizeLinkedin(val);
+    else if (t === "x" || t === "twitter") ids.xHandle ??= normalizeXHandle(val);
+    else if (t === "gh" || t === "github") ids.github ??= normalizeGithub(val);
+    else ids.redditUser ??= normalizeRedditUser(val);
+    if (!Object.values(ids).some(Boolean)) warnings.push(`could not parse handle ${handle}`);
+  } else if (handle && kind === "site" && !handle.startsWith("@") && !/^https?:|\.com\/|^\/?u\//i.test(handle) && !handle.includes("@")) {
+    // A bare handle next to a personal/company website is a site slug, not an X handle.
+  } else if (handle) {
     if (isRedditRef(handle)) ids.redditUser ??= normalizeRedditUser(handle.replace(/^@/, ""));
     else if (/^https?:|\.com\//i.test(handle)) {
       const e = extractIdentities(handle);
@@ -1291,8 +1339,9 @@ export function parseImportRow(r: Record<string, string>, warnings: string[] = [
   }
   const source = src as (typeof SOURCES)[number];
   const channel: OutreachChannel | undefined = source === "x" || source === "linkedin" || source === "reddit" ? source : ids.email ? "email" : undefined;
-  const mapped = mapStatus(v("status"));
-  if (!mapped.known) warnings.push(`unknown status ${v("status")}; using new`);
+  const statusRaw = v("status") ?? v("stage");
+  const mapped = mapStatus(statusRaw);
+  if (!mapped.known) warnings.push(`unknown status ${statusRaw}; using new`);
   let score = num(v("score"), warnings, "score");
   let scoreOriginal: string | null = null;
   if (score !== null && score > 5 && score <= 10) {
@@ -1307,7 +1356,7 @@ export function parseImportRow(r: Record<string, string>, warnings: string[] = [
   const firstSeen = firstSeenRaw && !Number.isNaN(Date.parse(firstSeenRaw)) ? new Date(firstSeenRaw) : null;
   if (firstSeenRaw && !firstSeen) warnings.push(`first_seen not a date: ${firstSeenRaw}`);
   const companyRaw = v("company");
-  const companyDomain = companyDomainFromEmail(ids.email) ?? (companyRaw && /^[^\s]+\.[a-z]{2,}$/i.test(companyRaw) ? normalizeDomain(companyRaw) : null);
+  const companyDomain = companyDomainFromEmail(ids.email) ?? (companyRaw && /^[^\s]+\.[a-z]{2,}$/i.test(companyRaw) ? normalizeDomain(companyRaw) : null) ?? (website ? normalizeDomain(website) : null);
   return {
     ids,
     name: v("name") ?? null,
@@ -1317,6 +1366,8 @@ export function parseImportRow(r: Record<string, string>, warnings: string[] = [
     ...parseTeamSize(v("est_team_size")),
     scoreOriginal,
     sourceDetail: srcRaw && srcRaw.toLowerCase() !== source ? srcRaw : null,
+    profileUrl: profile ?? null,
+    website,
     score,
     source,
     channel,

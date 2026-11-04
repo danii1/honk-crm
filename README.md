@@ -100,7 +100,16 @@ are Reddit handles, never names or X handles.
 - `est_team_size`: numbers as-is, ranges like `5-10` -> midpoint (8); anything else is stored in `est_team_size_text` without warnings.
 - `score` above 5 (up to 10) is treated as a 1-10 scale: `max(1, round(score/2))`; the original goes to `score_original`
   and the report has one summary line in `notices`.
-- `status: warm` -> responded.
+- `status: warm` -> responded. A `stage` column is accepted as an alias of `status`.
+- Identity comes from `profile_url` first. A non-social `profile_url` (not x/twitter/linkedin/reddit/github) is stored as
+  `website` and its domain becomes the company domain; a bare `handle` next to it is NOT treated as an X handle
+  (use `@name` or `x:name` to force X). The raw `profile_url` is stored and exported verbatim.
+- Ambiguous sources (`web`, `handoff_*`, missing/unknown) follow a social `profile_url` (x / linkedin / reddit).
+- Handle prefixes: `li:<slug>` (LinkedIn /in/), `x:`/`twitter:`, `gh:`/`github:`, `reddit:`/`u/`.
+- `export_csv` exports the raw `profile_url` (pass `derived_profile_url: true` for URLs rebuilt from identities),
+  the stage as `stage`, plus `website`, `source_detail` and a `status` alias column at the end.
+- `upsert_contact` accepts `contact_id` (edit that exact contact), `profile_url`, `website`, `source_detail`, and
+  `clear: [x_handle|linkedin_url|reddit_user|github|email|profile_url|website|company_id]` to null fields.
 
 ### Calling the REST API: send a custom User-Agent
 Callers should always send a descriptive `User-Agent` (e.g. `sales-outbound/1.0`). Generic library agents such as
