@@ -2,8 +2,8 @@ import { Columns3, RotateCcw, Search, SlidersHorizontal, Users, UserPlus } from 
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { listCampaigns, listChannels, listContactsView, type ChannelDef, type Contact, type ContactListResponse, type Lifecycle } from "@/client/lib/api";
-import { ARCHIVED_STAGES, CONTACT_STAGES, LEAD_STAGES } from "@/client/lib/constants";
 import { contactHref } from "@/client/lib/links";
+import { contactListFilters, paramsForView, stageForView, stagesForView, viewFromParams } from "@/client/lib/views";
 import { formatDay, titleCase } from "@/client/lib/utils";
 import { EmptyState } from "@/client/components/empty-state";
 import { PageHeader } from "@/client/components/page-header";
@@ -29,10 +29,14 @@ const COLUMNS: { key: ColumnKey; label: string }[] = [
   { key: "score", label: "Score" },
 ];
 const DEFAULT_COLUMNS: ColumnKey[] = ["stage", "source", "channels", "company", "lastTouch", "score"];
+const PAGE_SIZE = 500;
 
 export function ContactsPage({ lifecycle }: { lifecycle: "lead" | "contact" }) {
   const [params, setParams] = useSearchParams();
-  const [view, setView] = useState<Lifecycle>(lifecycle);
+  const view = viewFromParams(lifecycle, params);
+  const stage = stageForView(view, params.get("stage"));
+  const channel = params.get("channel") || undefined;
+  const offset = Math.max(0, Number(params.get("offset")) || 0);
   const [data, setData] = useState<ContactListResponse | null>(null);
   const [channels, setChannels] = useState<ChannelDef[]>([]);
   const [campaigns, setCampaigns] = useState<{ id: string; name: string }[]>([]);
@@ -42,26 +46,24 @@ export function ContactsPage({ lifecycle }: { lifecycle: "lead" | "contact" }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    setView(lifecycle);
-  }, [lifecycle]);
-
-  useEffect(() => {
     listChannels().then((r) => setChannels(r.channels)).catch(() => undefined);
     listCampaigns().then(setCampaigns).catch(() => undefined);
   }, []);
+
+  // Deep links may carry a stage from another lifecycle; drop it so rows and tabs stay consistent.
+  useEffect(() => {
+    if (params.get("stage") && !stage) setParams(paramsForView(params, view), { replace: true });
+  }, [params, stage, view, setParams]);
 
   useEffect(() => {
     setSearch(params.get("query") ?? "");
     let alive = true;
     setLoading(true);
+    setError(null);
     listContactsView({
-      lifecycle: view,
-      stage: params.get("stage") || undefined,
-      channel: params.get("channel") || undefined,
-      source: params.get("source") || undefined,
-      campaign_id: params.get("campaign") || undefined,
-      query: params.get("query") || undefined,
-      limit: 500,
+      ...contactListFilters(view, params),
+      limit: PAGE_SIZE,
+      offset,
     })
       .then((r) => alive && setData(r))
       .catch((e: Error) => alive && setError(e.message))
@@ -69,25 +71,30 @@ export function ContactsPage({ lifecycle }: { lifecycle: "lead" | "contact" }) {
     return () => {
       alive = false;
     };
-  }, [params, view]);
+  }, [params, view, stage, offset]);
 
-  const stageOptions = useMemo(() => {
-    if (view === "lead") return [...LEAD_STAGES];
-    if (view === "contact") return [...CONTACT_STAGES];
-    return [...ARCHIVED_STAGES];
-  }, [view]);
+  const stageOptions = useMemo(() => stagesForView(view), [view]);
 
   const update = (key: string, value: string) => {
     const next = new URLSearchParams(params);
+    next.delete("offset");
     if (value) next.set(key, value);
     else next.delete(key);
     setParams(next, { replace: true });
   };
 
   const reset = () => setParams(new URLSearchParams(), { replace: true });
+  const goToOffset = (next: number) => {
+    const p = new URLSearchParams(params);
+    if (next > 0) p.set("offset", String(next));
+    else p.delete("offset");
+    setParams(p, { replace: true });
+  };
   const hasFilters = ["stage", "channel", "source", "campaign", "query"].some((k) => params.get(k));
   const rows = data?.contacts ?? [];
-  const total = data ? (view === "lead" ? data.counts.lead : view === "contact" ? data.counts.contact : data.counts.archived) : 0;
+  const total = data?.total ?? 0;
+  const start = rows.length ? offset + 1 : 0;
+  const end = offset + rows.length;
   const Icon = lifecycle === "lead" ? UserPlus : Users;
   const title = lifecycle === "lead" ? "Leads" : "Contacts";
 
@@ -130,7 +137,7 @@ export function ContactsPage({ lifecycle }: { lifecycle: "lead" | "contact" }) {
       />
 
       {lifecycle === "contact" ? (
-        <Tabs value={view} onValueChange={(v) => setView(v as Lifecycle)} className="mb-4">
+        <Tabs value={view} onValueChange={(v) => setParams(paramsForView(params, v as Lifecycle), { replace: true })} className="mb-4">
           <TabsList>
             <TabsTrigger value="contact">Relationships <span className="text-[10px] text-muted-foreground">{data?.counts.contact ?? 0}</span></TabsTrigger>
             <TabsTrigger value="archived">Lost / DNC <span className="text-[10px] text-muted-foreground">{data?.counts.archived ?? 0}</span></TabsTrigger>
@@ -151,11 +158,11 @@ export function ContactsPage({ lifecycle }: { lifecycle: "lead" | "contact" }) {
             <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, handle, company, email…" className="pl-9" aria-label="Search" />
           </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <Select aria-label="Stage" value={params.get("stage") ?? ""} onChange={(e) => update("stage", e.target.value)}>
-              <option value="">Any stage</option>
+            <Select aria-label={channel ? "Channel stage" : "Stage"} value={stage ?? ""} onChange={(e) => update("stage", e.target.value)}>
+              <option value="">{channel ? "Any channel stage" : "Any stage"}</option>
               {stageOptions.map((s) => <option key={s} value={s}>{titleCase(s)}</option>)}
             </Select>
-            <Select aria-label="Channel" value={params.get("channel") ?? ""} onChange={(e) => update("channel", e.target.value)}>
+            <Select aria-label="Channel" value={channel ?? ""} onChange={(e) => update("channel", e.target.value)}>
               <option value="">Any channel</option>
               {channels.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
             </Select>
@@ -217,6 +224,15 @@ export function ContactsPage({ lifecycle }: { lifecycle: "lead" | "contact" }) {
               ))}
             </TableBody>
           </Table>
+          {total > PAGE_SIZE ? (
+            <div className="flex items-center justify-between border-t px-3 py-2 text-xs text-muted-foreground">
+              <span>Showing {start}–{end} of {total}</span>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" disabled={offset === 0} onClick={() => goToOffset(Math.max(0, offset - PAGE_SIZE))}>Previous</Button>
+                <Button variant="outline" size="sm" disabled={end >= total} onClick={() => goToOffset(offset + PAGE_SIZE)}>Next</Button>
+              </div>
+            </div>
+          ) : null}
         </Card>
       ) : (
         <EmptyState
@@ -230,7 +246,7 @@ export function ContactsPage({ lifecycle }: { lifecycle: "lead" | "contact" }) {
   );
 }
 
-function ContactName({ contact }: { contact: Contact }) {
+export function ContactName({ contact }: { contact: Contact }) {
   return (
     <div className="min-w-0">
       <Link to={contactHref(contact)} className="block truncate font-medium hover:text-primary hover:underline">

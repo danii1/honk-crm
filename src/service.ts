@@ -9,7 +9,7 @@ import { advance, defaultMatchMode, DRAFT_TRANSITIONS, matchBlocklist, normalize
 import { extractIdentities, mapStatus, parseCsvObjects, toCsv } from "./csv";
 import { Repository, type DB } from "./repository";
 import { atLeast } from "./roles";
-import { BUILTIN_CHANNELS, BUILTIN_REGISTRY, CHANNEL_ID_RE, ChannelRegistry, LEGACY_EXPORT_CHANNELS, KIND_INDEX, websiteUrl, type Identity } from "./channels";
+import { BUILTIN_CHANNELS, BUILTIN_REGISTRY, CHANNEL_ID_RE, ChannelRegistry, externalUrl, LEGACY_EXPORT_CHANNELS, KIND_INDEX, websiteUrl, type Identity } from "./channels";
 import { LIFECYCLES, lifecycleCounts, lifecycleOf } from "./lifecycle";
 
 // ---------- input schemas (shared by MCP tools and REST routes)
@@ -24,6 +24,11 @@ const identitiesArg = z
   .describe("Generic identities [{kind, value, scope?}]; kind = x_handle|linkedin_url|email|reddit_user|github|threads_handle|hn_user|discord_user|slack_user|bsky_handle|tiktok|instagram|youtube|facebook|telegram|whatsapp|<custom channel id> (a channel id or import prefix like hn, bsky, wa also works)");
 // Plain ISO strings (not z.date) so the schema converts to JSON Schema for MCP.
 const date = z.string().refine((v) => !Number.isNaN(Date.parse(v)), "expected an ISO 8601 date/time").describe("ISO 8601 date/time");
+/** Stored links must be http(s) or mailto; bare hosts are normalized to https at the write site. */
+const externalUrlArg = z
+  .string()
+  .trim()
+  .refine((v) => v === "" || externalUrl(v) !== null, "expected an http(s) or mailto URL");
 const markSentBase = {
   draft_id: z.string().optional(),
   intent_url: z.string().optional().describe("Exact intent URL stored on the draft"),
@@ -79,7 +84,7 @@ export const schemas = {
     score: z.number().int().min(1).max(5).optional(),
     first_seen: date.optional(),
     notes: z.string().optional().describe("Free-text notes field on the contact (see add_note for timestamped notes)"),
-    signal_post_url: z.string().optional(),
+    signal_post_url: externalUrlArg.optional(),
     signal_date: z.string().optional(),
     signal_summary: z.string().optional(),
     stage: z.enum(STAGES).optional().describe("Overall stage; only moves forward unless set via update_stage"),
@@ -212,7 +217,7 @@ export const schemas = {
     contact_id: z.string(),
     channel: chan,
     text: z.string().min(1),
-    intent_url: z.string().optional().describe("e.g. an x.com/intent URL the human clicks to send"),
+    intent_url: externalUrlArg.optional().describe("e.g. an x.com/intent URL the human clicks to send"),
     thread_id: z.string().optional().describe("Thread the draft replies into (tweet/conversation id, gmail threadId, reddit post id)"),
     campaign_id: z.string().optional().describe("Defaults to the contact's campaign"),
     idempotency_key: idem,
@@ -222,7 +227,7 @@ export const schemas = {
     draft_id: z.string(),
     to: z.enum(DRAFT_STATES).describe("drafted->approved|discarded|drafted(edit), approved->sent|discarded|drafted. sent/discarded are final."),
     text: z.string().min(1).optional().describe("New text; only when moving to drafted"),
-    intent_url: z.string().optional(),
+    intent_url: externalUrlArg.optional(),
     external_id: z.string().optional().describe("When to=sent: id/URL of the sent message"),
     sent_at: date.optional().describe("When to=sent; defaults to now"),
     next_followup_at: date.optional().describe("When to=sent: reminder on the channel"),
@@ -266,10 +271,12 @@ export const schemas = {
     contact_type: z.enum(CONTACT_TYPES).optional(),
     query: z.string().optional(),
     limit: z.number().int().min(1).max(1000).default(500),
+    offset: z.number().int().min(0).default(0).describe("Rows to skip; use with limit for pagination"),
   }),
   list_companies: z.object({
     query: z.string().optional(),
     limit: z.number().int().min(1).max(500).default(200),
+    offset: z.number().int().min(0).default(0).describe("Rows to skip; use with limit for pagination"),
   }),
   due_followups: z.object({
     today: z.string().optional().describe("YYYY-MM-DD or ISO time in `tz`; defaults to now"),
@@ -666,7 +673,7 @@ export class CrmService {
         ...(i.score !== undefined && { score: i.score }),
         ...(i.first_seen && { firstSeenAt: new Date(i.first_seen) }),
         ...(i.notes && { notesText: i.notes }),
-        ...(i.signal_post_url && { signalPostUrl: i.signal_post_url }),
+        ...(i.signal_post_url && { signalPostUrl: externalUrl(i.signal_post_url)! }),
         ...(i.signal_date && { signalDate: i.signal_date }),
         ...(i.signal_summary && { signalSummary: i.signal_summary }),
         ...(i.source_detail && { sourceDetail: i.source_detail }),
@@ -1029,7 +1036,9 @@ export class CrmService {
   }
 
   async create_draft(raw: Input<"create_draft">) {
-    const i = await this.parse("create_draft", raw);
+    const parsed = await this.parse("create_draft", raw);
+    // Normalize before hashing/inserting so retries with the bare or normalized URL are one request.
+    const i = { ...parsed, ...(parsed.intent_url ? { intent_url: externalUrl(parsed.intent_url)! } : {}) };
     return this.idempotent("create_draft", i, async () => {
       const contact = await this.repo.contactById(i.contact_id);
       if (!contact) throw new CrmError("not_found", `contact ${i.contact_id} not found`);
@@ -1039,7 +1048,7 @@ export class CrmService {
       if (state?.stage === "do_not_contact") throw new CrmError("blocked", `contact is do_not_contact on ${i.channel}`);
       const campaignId = i.campaign_id ?? contact.campaignId;
       if (i.campaign_id && !(await this.repo.campaignById(i.campaign_id))) throw new CrmError("not_found", `campaign ${i.campaign_id} not found`);
-      const draft = await this.repo.insertDraft({ contactId: contact.id, channel: i.channel, text: i.text, intentUrl: i.intent_url, threadId: i.thread_id, campaignId, state: "drafted", stateChangedAt: new Date() });
+      const draft = await this.repo.insertDraft({ contactId: contact.id, channel: i.channel, text: i.text, intentUrl: i.intent_url || undefined, threadId: i.thread_id, campaignId, state: "drafted", stateChangedAt: new Date() });
       await this.repo.appendActivity({ action: "draft.created", entityType: "draft", entityId: draft.id, reason: i.reason, payload: { contact_id: contact.id, channel: i.channel, campaign_id: campaignId } });
       await this.bumpChannel(contact.id, i.channel, { stage: "drafted" }, i.reason);
       return draft;
@@ -1047,7 +1056,8 @@ export class CrmService {
   }
 
   async transition_draft(raw: Input<"transition_draft">) {
-    const i = await this.parse("transition_draft", raw);
+    const parsed = await this.parse("transition_draft", raw);
+    const i = { ...parsed, ...(parsed.intent_url ? { intent_url: externalUrl(parsed.intent_url)! } : {}) };
     return this.idempotent("transition_draft", i, async () => {
       const draft = await this.repo.draftById(i.draft_id);
       if (!draft) throw new CrmError("not_found", `draft ${i.draft_id} not found`);
@@ -1099,8 +1109,11 @@ export class CrmService {
       return { draft: d, matched_by: "draft_id" };
     }
     if (i.intent_url) {
-      const r = pickDraft(await this.repo.draftsByIntentUrl(i.intent_url), "intent_url");
-      if (r) return r;
+      // Match stored drafts written before normalization and those written after it.
+      for (const url of new Set([i.intent_url, externalUrl(i.intent_url) ?? i.intent_url])) {
+        const r = pickDraft(await this.repo.draftsByIntentUrl(url), "intent_url");
+        if (r) return r;
+      }
     }
     // Already-sent check first so retries are idempotent.
     for (const ref of [postId(i.external_id), postId(i.external_url)].filter((x): x is string => !!x)) {
@@ -1280,7 +1293,7 @@ export class CrmService {
     requireScope(this.ctx, "crm:read");
     const i = await this.parse("daily_overview", raw);
     const now = new Date();
-    const [followups, linkedin, events, drafted, approved, pacing, stale, report] = await Promise.all([
+    const [followups, linkedin, events, drafted, approved, pacing, stale, report, stageCounts] = await Promise.all([
       this.due_followups({ tz: i.tz, limit: i.limit }),
       this.linkedin_needs_first_message({ limit: i.limit }),
       this.repo.eventsSince(new Date(now.getTime() - DAY)),
@@ -1289,8 +1302,18 @@ export class CrmService {
       this.x_pacing_today({ tz: i.tz }),
       this.stale_no_response({ limit: i.limit }),
       this.outreach_report({ tz: i.tz }),
+      // Same population as pipeline_summary/list_contacts_view (all contacts, competitors included).
+      this.repo.stageCounts(),
     ]);
-    const names = new Map((await this.repo.allContacts()).map((c) => [c.id, c.name]));
+    const stages = Object.fromEntries(STAGES.map((st) => [st, 0])) as Record<(typeof STAGES)[number], number>;
+    for (const c of stageCounts) stages[c.stage] = Number(c.count);
+    const contacts = await this.repo.allContacts();
+    const names = new Map(contacts.map((c) => [c.id, c.name]));
+    const contactById = new Map(contacts.map((c) => [c.id, c]));
+    const contactLifecycle = (id: string) => {
+      const c = contactById.get(id);
+      return c ? lifecycleOf(c.stage) : null;
+    };
     const replies = events.filter((e) => e.type === "reply_received" || e.type === "email_reply");
     return {
       date: localDateString(now, i.tz),
@@ -1298,14 +1321,14 @@ export class CrmService {
       followups_due: followups.channel_followups,
       tasks_due: followups.tasks,
       linkedin_awaiting_first_message: linkedin,
-      new_replies: replies.map((e) => ({ ...e, name: names.get(e.contactId) ?? null })),
-      events_last_24h: events.map((e) => ({ ...e, name: names.get(e.contactId) ?? null })),
-      drafts_pending: [...approved, ...drafted].map((d) => ({ id: d.id, contact_id: d.contactId, name: names.get(d.contactId) ?? null, channel: d.channel, state: d.state, text: d.text, intent_url: d.intentUrl, created_at: d.createdAt })),
+      new_replies: replies.map((e) => ({ ...e, name: names.get(e.contactId) ?? null, lifecycle: contactLifecycle(e.contactId) })),
+      events_last_24h: events.map((e) => ({ ...e, name: names.get(e.contactId) ?? null, lifecycle: contactLifecycle(e.contactId) })),
+      drafts_pending: [...approved, ...drafted].map((d) => ({ id: d.id, contact_id: d.contactId, name: names.get(d.contactId) ?? null, lifecycle: contactLifecycle(d.contactId), channel: d.channel, state: d.state, text: d.text, intent_url: d.intentUrl, created_at: d.createdAt })),
       x_pacing: pacing,
       stale,
       goal: report.goal,
       totals: report.totals,
-      stages: report.stages,
+      stages,
     };
   }
 
@@ -1348,9 +1371,12 @@ export class CrmService {
   async list_contacts_view(raw: Input<"list_contacts_view">) {
     requireScope(this.ctx, "crm:read");
     const i = await this.parse("list_contacts_view", raw);
-    const [rows, stages, reg] = await Promise.all([
-      this.repo.listContactsView({ stage: i.stage, lifecycle: i.lifecycle, source: i.source, campaignId: i.campaign_id, contactType: i.contact_type, channel: i.channel, channelStage: i.channel_stage, query: i.query, limit: i.limit }),
-      this.repo.stageCounts(),
+    const filters = { stage: i.stage, lifecycle: i.lifecycle, source: i.source, campaignId: i.campaign_id, contactType: i.contact_type, channel: i.channel, channelStage: i.channel_stage, query: i.query };
+    const [rows, total, stages, reg] = await Promise.all([
+      this.repo.listContactsView({ ...filters, limit: i.limit, offset: i.offset }),
+      this.repo.countContacts(filters),
+      // Tabs show every lifecycle and every stage, so counts honour the other filters only.
+      this.repo.stageCounts({ ...filters, lifecycle: undefined, stage: undefined, channelStage: undefined }),
       this.registry(),
     ]);
     const by = Object.fromEntries(STAGES.map((st) => [st, 0])) as Record<(typeof STAGES)[number], number>;
@@ -1362,6 +1388,7 @@ export class CrmService {
         company: c.company ? { ...c.company, website_url: websiteUrl(c.company.website ?? c.company.domain) } : null,
         identities: c.identities.map((r) => this.identityRow(reg, r, false)),
       })),
+      total,
       counts: { ...lifecycleCounts(by), stages: by },
     };
   }
@@ -1369,19 +1396,32 @@ export class CrmService {
   async list_companies(raw: Input<"list_companies">) {
     requireScope(this.ctx, "crm:read");
     const i = await this.parse("list_companies", raw);
-    const [companies, contacts] = await Promise.all([this.repo.listCompanies({ query: i.query, limit: i.limit }), this.repo.allContacts()]);
+    const [companies, total] = await Promise.all([
+      this.repo.listCompanies({ query: i.query, limit: i.limit, offset: i.offset }),
+      this.repo.countCompanies({ query: i.query }),
+    ]);
+    const stats = await this.repo.contactStageCountsByCompany(companies.map((c) => c.id));
+    const byCompany = new Map<string, { contacts: number; leads: number; relationships: number }>();
+    for (const row of stats) {
+      if (!row.companyId) continue;
+      const counts = byCompany.get(row.companyId) ?? { contacts: 0, leads: 0, relationships: 0 };
+      const n = Number(row.count);
+      counts.contacts += n;
+      const lifecycle = lifecycleOf(row.stage);
+      if (lifecycle === "lead") counts.leads += n;
+      else if (lifecycle === "contact") counts.relationships += n;
+      byCompany.set(row.companyId, counts);
+    }
     return {
       companies: companies.map((c) => {
-        const people = contacts.filter((x) => x.companyId === c.id);
+        const counts = byCompany.get(c.id) ?? { contacts: 0, leads: 0, relationships: 0 };
         return {
           ...c,
           website_url: websiteUrl(c.website ?? c.domain),
-          contacts: people.length,
-          leads: people.filter((x) => lifecycleOf(x.stage) === "lead").length,
-          relationships: people.filter((x) => lifecycleOf(x.stage) === "contact").length,
+          ...counts,
         };
       }),
-      total: companies.length,
+      total,
     };
   }
 
@@ -1394,6 +1434,7 @@ export class CrmService {
     const channel = (await this.repo.followupsDueBefore(end, i.limit)).map((r) => ({
       contact_id: r.contact.id,
       name: r.contact.name,
+      lifecycle: lifecycleOf(r.contact.stage),
       channel: r.state.channel,
       stage: r.state.stage,
       next_followup_at: r.state.nextFollowupAt,
@@ -1415,7 +1456,7 @@ export class CrmService {
     return rows
       .filter((r) => (!i.channel || r.state.channel === i.channel) && r.contact.stage !== "do_not_contact" && r.state.lastTouchAt!.getTime() < now - days(r.state.channel) * DAY)
       .slice(0, i.limit)
-      .map((r) => ({ contact_id: r.contact.id, name: r.contact.name, channel: r.state.channel, stage: r.state.stage, last_touch_at: r.state.lastTouchAt, days_since: Math.floor((now - r.state.lastTouchAt!.getTime()) / DAY), threshold_days: days(r.state.channel) }));
+      .map((r) => ({ contact_id: r.contact.id, name: r.contact.name, lifecycle: lifecycleOf(r.contact.stage), channel: r.state.channel, stage: r.state.stage, last_touch_at: r.state.lastTouchAt, days_since: Math.floor((now - r.state.lastTouchAt!.getTime()) / DAY), threshold_days: days(r.state.channel) }));
   }
 
   async linkedin_needs_first_message(raw: Input<"linkedin_needs_first_message">) {
@@ -1429,7 +1470,7 @@ export class CrmService {
     return rows
       .filter((r) => !touched.has(r.contact.id) && !sentDrafts.has(r.contact.id) && r.contact.stage !== "do_not_contact")
       .slice(0, i.limit)
-      .map((r) => ({ contact_id: r.contact.id, name: r.contact.name, linkedin: r.contact.linkedin, stage: r.state.stage, next_step: r.state.nextStep }));
+      .map((r) => ({ contact_id: r.contact.id, name: r.contact.name, lifecycle: lifecycleOf(r.contact.stage), linkedin: r.contact.linkedin, stage: r.state.stage, next_step: r.state.nextStep }));
   }
 
   async linkedin_connected_no_first_message(raw: Input<"linkedin_connected_no_first_message">) {
@@ -1983,6 +2024,9 @@ export function parseImportRow(r: Record<string, string>, warnings: string[] = [
   const firstSeenRaw = v("first_seen");
   const firstSeen = firstSeenRaw && !Number.isNaN(Date.parse(firstSeenRaw)) ? new Date(firstSeenRaw) : null;
   if (firstSeenRaw && !firstSeen) warnings.push(`first_seen not a date: ${firstSeenRaw}`);
+  const signalRaw = v("signal_post_url");
+  const signalUrl = externalUrl(signalRaw);
+  if (signalRaw && !signalUrl) warnings.push(`signal_post_url is not an http(s) URL: ${signalRaw}`);
   const companyRaw = v("company");
   const companyDomain = companyDomainFromEmail(ids.email) ?? (companyRaw && /^[^\s]+\.[a-z]{2,}$/i.test(companyRaw) ? normalizeDomain(companyRaw) : null) ?? (website ? normalizeDomain(website) : null);
   return {
@@ -2003,7 +2047,7 @@ export function parseImportRow(r: Record<string, string>, warnings: string[] = [
     firstSeen,
     company: companyRaw ?? null,
     companyDomain,
-    signalUrl: v("signal_post_url") ?? null,
+    signalUrl,
     signalDate: v("signal_post_date") ?? null,
     signalSummary: v("signal_summary") ?? null,
     notes: notes ?? null,
@@ -2051,8 +2095,8 @@ export const TOOL_DESCRIPTIONS: Record<keyof typeof schemas, string> = {
   upsert_campaign: "Create or update a campaign (name unique; offer_text, status). Link contacts via upsert_contact.campaign_id and drafts via create_draft.campaign_id.",
   list_campaigns: "List campaigns.",
   list_contacts: "List contacts filtered by overall stage, lifecycle (lead/contact/archived), channel and channel_stage, source, campaign, contact_type and a text query.",
-  list_contacts_view: "Dashboard list rows: contacts with lifecycle, company, linked identities (with outbound profile URLs) and lifecycle/stage counts. Filters: lifecycle, stage, channel, channel_stage, source, campaign, contact_type, query.",
-  list_companies: "List companies with website URL and contact/lead/relationship counts; optional text query.",
+  list_contacts_view: "Dashboard list rows: contacts with lifecycle, company, linked identities (with outbound profile URLs), filter-scoped total, and lifecycle/stage counts that honour every filter except lifecycle and stage/channel_stage so both tabs and every stage filter can show their totals. Filters: lifecycle, stage, channel, channel_stage, source, campaign, contact_type, query. Paginate with limit/offset.",
+  list_companies: "List companies with website URL and contact/lead/relationship counts; optional text query. Paginate with limit/offset.",
   due_followups: "Channel follow-ups (next_followup_at) due by end of today in tz (default Asia/Saigon), flagged overdue, plus open tasks due.",
   stale_no_response: "Contacts contacted / connection_pending / connected on a channel with no touch for at least `days` days.",
   linkedin_needs_first_message: "LinkedIn contacts at connection_pending or connected with no outbound LinkedIn message logged yet.",

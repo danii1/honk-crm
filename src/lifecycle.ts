@@ -1,4 +1,12 @@
-import type { Stage } from "./db/schema";
+/**
+ * Pipeline stages and their lifecycle groups are the single source of truth for both
+ * the server schema and the client UI.
+ */
+export const STAGES = [
+  "new", "qualified", "drafted", "contacted", "connection_pending", "connected",
+  "responded", "call_booked", "pilot", "paying", "lost", "do_not_contact",
+] as const;
+export type Stage = (typeof STAGES)[number];
 
 /**
  * Lifecycle is derived from the pipeline stage; it is not a second source of truth.

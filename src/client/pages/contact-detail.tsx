@@ -1,9 +1,9 @@
 import { ArrowLeft, ArrowUpRight, CalendarDays, Check, CircleX, Clock, FileText, Mail, MessageSquare, Pencil, Send, Sparkles, Target, UserRound, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { getActivity, getContact, transitionDraft, updateStage, type Activity, type ContactDetail, type Draft } from "@/client/lib/api";
+import { getActivity, getContact, transitionDraft, updateStage, type Activity, type ContactDetail, type Draft, type Identity } from "@/client/lib/api";
 import { STAGES } from "@/client/lib/constants";
-import { formatDate, formatDay, titleCase } from "@/client/lib/utils";
+import { formatDate, formatDay, safeExternalUrl, titleCase } from "@/client/lib/utils";
 import { useApp } from "@/client/App";
 import { ChannelIcon } from "@/client/components/channel-icon";
 import { EmptyState } from "@/client/components/empty-state";
@@ -94,6 +94,7 @@ export function ContactDetailPage() {
   const isLead = contact.lifecycle === "lead";
   const backTo = isLead ? "/leads" : "/contacts";
   const displayName = contact.name || contact.email || contact.id.slice(0, 8);
+  const contactWebsite = safeExternalUrl(contact.website) ?? contact.company?.website_url;
 
   return (
     <>
@@ -206,28 +207,31 @@ export function ContactDetailPage() {
             <CardContent className="p-0">
               {contact.drafts.length ? (
                 <div className="divide-y">
-                  {contact.drafts.map((d) => (
-                    <div key={d.id} className="p-4">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant="outline">{titleCase(d.channel)}</Badge>
-                        <DraftBadge state={d.state} />
-                        <span className="text-[10px] text-muted-foreground">{formatDate(d.createdAt)}</span>
-                        {d.intentUrl ? (
-                          <a href={d.intentUrl} target="_blank" rel="noreferrer noopener" className="ml-auto inline-flex items-center gap-1 text-[11px] text-primary hover:underline">
-                            Open intent <ArrowUpRight className="size-3" />
-                          </a>
+                  {contact.drafts.map((d) => {
+                    const intentHref = safeExternalUrl(d.intentUrl);
+                    return (
+                      <div key={d.id} className="p-4">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge variant="outline">{titleCase(d.channel)}</Badge>
+                          <DraftBadge state={d.state} />
+                          <span className="text-[10px] text-muted-foreground">{formatDate(d.createdAt)}</span>
+                          {intentHref ? (
+                            <a href={intentHref} target="_blank" rel="noreferrer noopener" className="ml-auto inline-flex items-center gap-1 text-[11px] text-primary hover:underline">
+                              Open intent <ArrowUpRight className="size-3" />
+                            </a>
+                          ) : null}
+                        </div>
+                        <p className="mt-2 whitespace-pre-wrap text-xs text-muted-foreground">{d.text}</p>
+                        {canWrite && (d.state === "drafted" || d.state === "approved") ? (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {d.state === "drafted" ? <Button size="sm" variant="outline" disabled={busy} onClick={() => draftAction(d, "approved")}><Check className="size-3.5" /> Approve</Button> : null}
+                            {d.state === "approved" ? <Button size="sm" disabled={busy} onClick={() => draftAction(d, "sent")}><Send className="size-3.5" /> Mark sent</Button> : null}
+                            <Button size="sm" variant="ghost" disabled={busy} onClick={() => draftAction(d, "discarded")}><X className="size-3.5" /> Discard</Button>
+                          </div>
                         ) : null}
                       </div>
-                      <p className="mt-2 whitespace-pre-wrap text-xs text-muted-foreground">{d.text}</p>
-                      {canWrite && (d.state === "drafted" || d.state === "approved") ? (
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {d.state === "drafted" ? <Button size="sm" variant="outline" disabled={busy} onClick={() => draftAction(d, "approved")}><Check className="size-3.5" /> Approve</Button> : null}
-                          {d.state === "approved" ? <Button size="sm" disabled={busy} onClick={() => draftAction(d, "sent")}><Send className="size-3.5" /> Mark sent</Button> : null}
-                          <Button size="sm" variant="ghost" disabled={busy} onClick={() => draftAction(d, "discarded")}><X className="size-3.5" /> Discard</Button>
-                        </div>
-                      ) : null}
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <EmptyState title="No drafts" description="Drafts for this contact will appear here with their state." className="m-4" />
@@ -252,8 +256,8 @@ export function ContactDetailPage() {
               <Property label="Last touch" value={contact.lastTouchAt ? formatDate(contact.lastTouchAt) : null} />
               <div className="border-t pt-3">
                 <p className="text-[11px] font-medium text-muted-foreground">Website</p>
-                <WebsiteLink url={contact.website ? (contact.website.startsWith("http") ? contact.website : `https://${contact.website}`) : contact.company?.website_url} label={contact.website ?? contact.company?.domain} className="mt-1 text-xs" />
-                {!contact.website && !contact.company?.website_url ? <p className="mt-1 text-xs text-muted-foreground">—</p> : null}
+                <WebsiteLink url={contactWebsite} label={safeExternalUrl(contact.website) ?? contact.company?.domain} className="mt-1 text-xs" />
+                {!contactWebsite ? <p className="mt-1 text-xs text-muted-foreground">—</p> : null}
               </div>
               {contact.signalSummary ? (
                 <div className="border-t pt-3">
@@ -277,23 +281,7 @@ export function ContactDetailPage() {
             </CardHeader>
             <CardContent className="p-4">
               {contact.identities?.length ? (
-                <div className="space-y-2">
-                  {contact.identities.map((i) => (
-                    <div key={`${i.kind}:${i.scope ?? ""}:${i.value}`} className="flex items-center gap-2 text-xs">
-                      <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground"><ChannelIcon channel={i.channel} /></span>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{i.label}{i.private ? " · private" : ""}</p>
-                        {i.url ? (
-                          <a href={i.url} target={i.url.startsWith("mailto:") ? undefined : "_blank"} rel="noreferrer noopener" className="block truncate font-medium text-primary hover:underline">
-                            {i.value}
-                          </a>
-                        ) : (
-                          <p className="truncate font-medium">{i.value}</p>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                <IdentityProfiles identities={contact.identities} />
               ) : (
                 <p className="text-xs text-muted-foreground">No linked profiles.</p>
               )}
@@ -345,6 +333,32 @@ export function ContactDetailPage() {
         </aside>
       </div>
     </>
+  );
+}
+
+/** Profile rows for a contact; hrefs go through safeExternalUrl so legacy rows cannot smuggle a hostile scheme. */
+export function IdentityProfiles({ identities }: { identities: Identity[] }) {
+  return (
+    <div className="space-y-2">
+      {identities.map((i) => {
+        const href = safeExternalUrl(i.url);
+        return (
+          <div key={`${i.kind}:${i.scope ?? ""}:${i.value}`} className="flex items-center gap-2 text-xs">
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground"><ChannelIcon channel={i.channel} /></span>
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{i.label}{i.private ? " · private" : ""}</p>
+              {href ? (
+                <a href={href} target={href.startsWith("mailto:") ? undefined : "_blank"} rel="noreferrer noopener" className="block truncate font-medium text-primary hover:underline">
+                  {i.value}
+                </a>
+              ) : (
+                <p className="truncate font-medium">{i.value}</p>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

@@ -17,11 +17,15 @@ import { Skeleton } from "@/client/components/ui/skeleton";
 export function PipelinePage() {
   const { pipeline } = useApp();
   const [contacts, setContacts] = useState<Contact[] | null>(null);
+  const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     listContactsView({ limit: 1000 })
-      .then((r) => setContacts(r.contacts))
+      .then((r) => {
+        setContacts(r.contacts);
+        setTotal(r.total);
+      })
       .catch((e: Error) => setError(e.message));
   }, []);
 
@@ -52,6 +56,12 @@ export function PipelinePage() {
           ) : null
         }
       />
+
+      {contacts && contacts.length < total ? (
+        <div className="mb-3 rounded-lg border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          Showing the {contacts.length} most recently updated of {total} contacts; {total - contacts.length} older records are not shown.
+        </div>
+      ) : null}
 
       {!contacts ? (
         <div className="flex gap-3 overflow-hidden">

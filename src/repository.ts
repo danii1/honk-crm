@@ -86,15 +86,18 @@ export class Repository {
     const t = s.contactIdentities;
     return this.db.select().from(t).where(and(eq(t.orgId, this.orgId), eq(t.contactId, contactId))).orderBy(asc(t.kind));
   }
+  /** Runs an id-batched query in chunks small enough for D1's 100-parameter statement limit. */
+  private async inIdChunks<T>(ids: string[], load: (chunk: string[]) => Promise<T[]>): Promise<T[]> {
+    const chunks: string[][] = [];
+    for (let n = 0; n < ids.length; n += 80) chunks.push(ids.slice(n, n + 80));
+    // Chunks are independent; run them concurrently so large pages do not pay one round trip each.
+    return (await Promise.all(chunks.map(load))).flat();
+  }
   /** Identities for many contacts in one query (list views). */
   async identitiesForMany(contactIds: string[]) {
     if (!contactIds.length) return [];
     const t = s.contactIdentities;
-    const out: (typeof t.$inferSelect)[] = [];
-    for (let n = 0; n < contactIds.length; n += 80) {
-      out.push(...(await this.db.select().from(t).where(and(eq(t.orgId, this.orgId), inArray(t.contactId, contactIds.slice(n, n + 80)))).orderBy(asc(t.kind))));
-    }
-    return out;
+    return this.inIdChunks(contactIds, (chunk) => this.db.select().from(t).where(and(eq(t.orgId, this.orgId), inArray(t.contactId, chunk))).orderBy(asc(t.kind)));
   }
   async allIdentities() {
     return this.db.select().from(s.contactIdentities).where(eq(s.contactIdentities.orgId, this.orgId));
@@ -157,25 +160,48 @@ export class Repository {
   async allCompanies() {
     return this.db.select().from(s.companies).where(eq(s.companies.orgId, this.orgId));
   }
-  async listCompanies(q: { query?: string; limit: number }) {
+  private companyConds(query?: string) {
     const c = s.companies;
     const conds: (SQL | undefined)[] = [eq(c.orgId, this.orgId)];
-    if (q.query?.trim()) {
-      const p = `%${q.query.trim().toLowerCase()}%`;
+    if (query?.trim()) {
+      const p = `%${query.trim().toLowerCase()}%`;
       conds.push(or(like(sql`lower(${c.name})`, p), like(c.domain, p), like(c.website, p)));
     }
-    return this.db.select().from(c).where(and(...conds)).orderBy(asc(c.name)).limit(q.limit);
+    return conds;
+  }
+  async listCompanies(q: { query?: string; limit: number; offset?: number }) {
+    const c = s.companies;
+    return this.db.select().from(c).where(and(...this.companyConds(q.query))).orderBy(asc(c.name), asc(c.id)).limit(q.limit).offset(q.offset ?? 0);
+  }
+  async countCompanies(q: { query?: string }) {
+    const c = s.companies;
+    const [row] = await this.db.select({ count: sql<number>`count(*)` }).from(c).where(and(...this.companyConds(q.query)));
+    return Number(row?.count ?? 0);
+  }
+  /** Contact/lead/relationship counts per company, grouped in SQL for the given page of companies. */
+  async contactStageCountsByCompany(companyIds: string[]) {
+    const c = s.contacts;
+    if (!companyIds.length) return [];
+    return this.inIdChunks(companyIds, (chunk) =>
+      this.db
+        .select({ companyId: c.companyId, stage: c.stage, count: sql<number>`count(*)` })
+        .from(c)
+        .where(and(eq(c.orgId, this.orgId), inArray(c.companyId, chunk)))
+        .groupBy(c.companyId, c.stage),
+    );
   }
   async companyByName(name: string) {
     return this.db.query.companies.findFirst({
       where: and(eq(s.companies.orgId, this.orgId), sql`lower(${s.companies.name}) = ${name.trim().toLowerCase()}`),
     });
   }
-  private contactConds(q: { stage?: s.Stage; lifecycle?: Lifecycle; source?: string; campaignId?: string; contactType?: string; channel?: s.OutreachChannel; channelStage?: s.Stage; query?: string }) {
+  private contactConds(q: { stage?: s.Stage; lifecycle?: Lifecycle; source?: string; campaignId?: string; contactType?: string; channel?: s.OutreachChannel; channelStage?: s.Stage; query?: string }, intersectLifecycle = false) {
     const c = s.contacts;
     const conds: (SQL | undefined)[] = [eq(c.orgId, this.orgId)];
-    if (q.stage) conds.push(eq(c.stage, q.stage));
-    else if (q.lifecycle) conds.push(inArray(c.stage, stagesForLifecycle(q.lifecycle)));
+    if (q.stage) {
+      conds.push(eq(c.stage, q.stage));
+      if (intersectLifecycle && q.lifecycle) conds.push(inArray(c.stage, stagesForLifecycle(q.lifecycle)));
+    } else if (q.lifecycle) conds.push(inArray(c.stage, stagesForLifecycle(q.lifecycle)));
     if (q.source) conds.push(eq(c.source, q.source as (typeof s.SOURCES)[number]));
     if (q.campaignId) conds.push(eq(c.campaignId, q.campaignId));
     if (q.contactType) conds.push(eq(c.contactType, q.contactType as (typeof s.CONTACT_TYPES)[number]));
@@ -212,25 +238,49 @@ export class Repository {
     }
     return conds;
   }
-  async listContacts(q: { stage?: s.Stage; lifecycle?: Lifecycle; source?: string; campaignId?: string; contactType?: string; channel?: s.OutreachChannel; channelStage?: s.Stage; query?: string; limit: number }) {
-    return this.db.select().from(s.contacts).where(and(...this.contactConds(q))).orderBy(desc(s.contacts.updatedAt)).limit(q.limit);
+  async listContacts(q: { stage?: s.Stage; lifecycle?: Lifecycle; source?: string; campaignId?: string; contactType?: string; channel?: s.OutreachChannel; channelStage?: s.Stage; query?: string; limit: number }, intersectLifecycle = false) {
+    return this.db.select().from(s.contacts).where(and(...this.contactConds(q, intersectLifecycle))).orderBy(desc(s.contacts.updatedAt)).limit(q.limit);
+  }
+  /** Number of contacts matching a list filter (for pagination / "showing N of M"). */
+  async countContacts(q: { stage?: s.Stage; lifecycle?: Lifecycle; source?: string; campaignId?: string; contactType?: string; channel?: s.OutreachChannel; channelStage?: s.Stage; query?: string }, intersectLifecycle = true) {
+    const [row] = await this.db.select({ count: sql<number>`count(*)` }).from(s.contacts).where(and(...this.contactConds(q, intersectLifecycle)));
+    return Number(row?.count ?? 0);
   }
   /** List rows with the data the dashboard needs: company, identities and lifecycle. */
-  async listContactsView(q: { stage?: s.Stage; lifecycle?: Lifecycle; source?: string; campaignId?: string; contactType?: string; channel?: s.OutreachChannel; channelStage?: s.Stage; query?: string; limit: number }) {
-    const contacts = await this.listContacts(q);
+  async listContactsView(q: { stage?: s.Stage; lifecycle?: Lifecycle; source?: string; campaignId?: string; contactType?: string; channel?: s.OutreachChannel; channelStage?: s.Stage; query?: string; limit: number; offset?: number }) {
+    const contacts = await this.db
+      .select({
+        id: s.contacts.id,
+        name: s.contacts.name,
+        email: s.contacts.email,
+        role: s.contacts.role,
+        contactType: s.contacts.contactType,
+        source: s.contacts.source,
+        stage: s.contacts.stage,
+        score: s.contacts.score,
+        companyId: s.contacts.companyId,
+        website: s.contacts.website,
+        profileUrl: s.contacts.profileUrl,
+        firstSeenAt: s.contacts.firstSeenAt,
+        lastTouchAt: s.contacts.lastTouchAt,
+        company: s.companies,
+      })
+      .from(s.contacts)
+      .leftJoin(s.companies, and(eq(s.companies.id, s.contacts.companyId), eq(s.companies.orgId, this.orgId)))
+      .where(and(...this.contactConds(q, true)))
+      .orderBy(desc(s.contacts.updatedAt), asc(s.contacts.id))
+      .limit(q.limit)
+      .offset(q.offset ?? 0);
     const ids = contacts.map((c) => c.id);
-    const companyIds = [...new Set(contacts.map((c) => c.companyId).filter((x): x is string => !!x))];
-    const [companies, identities, states] = await Promise.all([
-      companyIds.length ? this.db.select().from(s.companies).where(and(eq(s.companies.orgId, this.orgId), inArray(s.companies.id, companyIds))) : [],
+    const [identities, states] = await Promise.all([
       this.identitiesForMany(ids),
-      ids.length ? this.db.select({ contactId: s.channelStates.contactId, lastTouchAt: s.channelStates.lastTouchAt }).from(s.channelStates).where(and(eq(s.channelStates.orgId, this.orgId), inArray(s.channelStates.contactId, ids))) : [],
+      this.inIdChunks(ids, (chunk) => this.db.select({ contactId: s.channelStates.contactId, lastTouchAt: s.channelStates.lastTouchAt }).from(s.channelStates).where(and(eq(s.channelStates.orgId, this.orgId), inArray(s.channelStates.contactId, chunk)))),
     ]);
-    const companyById = new Map(companies.map((c) => [c.id, c]));
     const idsBy = new Map<string, (typeof identities)[number][]>();
     for (const r of identities) idsBy.set(r.contactId, [...(idsBy.get(r.contactId) ?? []), r]);
     const channelTouch = new Map<string, Date>();
     for (const st of states) if (st.lastTouchAt && (!channelTouch.has(st.contactId) || channelTouch.get(st.contactId)! < st.lastTouchAt)) channelTouch.set(st.contactId, st.lastTouchAt);
-    return contacts.map((c) => ({ ...c, lastTouchAt: c.lastTouchAt ?? channelTouch.get(c.id) ?? null, company: c.companyId ? (companyById.get(c.companyId) ?? null) : null, identities: idsBy.get(c.id) ?? [] }));
+    return contacts.map((c) => ({ ...c, lastTouchAt: c.lastTouchAt ?? channelTouch.get(c.id) ?? null, company: c.companyId ? c.company ?? null : null, identities: idsBy.get(c.id) ?? [] }));
   }
   async contactByLinkedin(linkedin: string) {
     return this.db.query.contacts.findFirst({
@@ -296,11 +346,11 @@ export class Repository {
     }
     return this.db.select().from(s.contacts).where(and(...conds)).orderBy(desc(s.contacts.updatedAt)).limit(q.limit);
   }
-  async stageCounts() {
+  async stageCounts(q: { stage?: s.Stage; lifecycle?: Lifecycle; source?: string; campaignId?: string; contactType?: string; channel?: s.OutreachChannel; channelStage?: s.Stage; query?: string } = {}) {
     return this.db
       .select({ stage: s.contacts.stage, count: sql<number>`count(*)` })
       .from(s.contacts)
-      .where(eq(s.contacts.orgId, this.orgId))
+      .where(and(...this.contactConds(q, true)))
       .groupBy(s.contacts.stage);
   }
 

@@ -1,6 +1,6 @@
 import { ArrowUpRight, Globe } from "lucide-react";
 import type { Identity } from "@/client/lib/api";
-import { cn } from "@/client/lib/utils";
+import { cn, safeExternalUrl } from "@/client/lib/utils";
 import { ChannelIcon } from "./channel-icon";
 
 export function ProfileLinks({ identities, limit, className, showValue = false }: { identities?: Identity[]; limit?: number; className?: string; showValue?: boolean }) {
@@ -10,7 +10,8 @@ export function ProfileLinks({ identities, limit, className, showValue = false }
     <span className={cn("flex flex-wrap items-center gap-1", className)}>
       {list.map((i) => {
         const label = `${i.label}${i.private ? " (private)" : ""}: ${i.value}`;
-        if (!i.url) {
+        const href = safeExternalUrl(i.url);
+        if (!href) {
           return (
             <span key={`${i.kind}:${i.scope ?? ""}:${i.value}`} title={label} className="inline-flex items-center gap-1 rounded-md border bg-muted/40 px-1.5 py-0.5 text-[11px] text-muted-foreground">
               <ChannelIcon channel={i.channel} />
@@ -21,8 +22,8 @@ export function ProfileLinks({ identities, limit, className, showValue = false }
         return (
           <a
             key={`${i.kind}:${i.scope ?? ""}:${i.value}`}
-            href={i.url}
-            target={i.url.startsWith("mailto:") ? undefined : "_blank"}
+            href={href}
+            target={href.startsWith("mailto:") ? undefined : "_blank"}
             rel="noreferrer noopener"
             title={label}
             aria-label={label}
@@ -39,11 +40,12 @@ export function ProfileLinks({ identities, limit, className, showValue = false }
 }
 
 export function WebsiteLink({ url, label, className }: { url?: string | null; label?: string | null; className?: string }) {
-  if (!url) return null;
+  const href = safeExternalUrl(url);
+  if (!href) return null;
   return (
-    <a href={url} target="_blank" rel="noreferrer noopener" className={cn("inline-flex items-center gap-1 text-primary hover:underline", className)}>
+    <a href={href} target="_blank" rel="noreferrer noopener" className={cn("inline-flex items-center gap-1 text-primary hover:underline", className)}>
       <Globe className="size-3.5" />
-      {label ?? url.replace(/^https?:\/\//, "")}
+      {label ?? href.replace(/^https?:\/\//, "")}
       <ArrowUpRight className="size-3 opacity-60" />
     </a>
   );

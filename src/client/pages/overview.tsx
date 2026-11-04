@@ -2,7 +2,8 @@ import { ArrowRight, CalendarClock, CircleX, Clock, FileText, Flame, MailCheck, 
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { getOverview, type Overview } from "@/client/lib/api";
-import { contactHrefById } from "@/client/lib/links";
+import { LEAD_STAGES, stageCount } from "@/client/lib/constants";
+import { contactHrefById, stageHref } from "@/client/lib/links";
 import { formatDate, formatDay, pct, titleCase } from "@/client/lib/utils";
 import { useApp } from "@/client/App";
 import { EmptyState } from "@/client/components/empty-state";
@@ -30,6 +31,9 @@ export function OverviewPage() {
   const g = data.goal;
   const dueCount = data.followups_due.length + data.tasks_due.length;
   const maxStage = Math.max(1, ...Object.values(data.stages));
+  // Stage-derived like pipeline_summary/list_contacts_view, so both "Leads" figures use one population.
+  const stageLeads = stageCount(data.stages, LEAD_STAGES);
+  const stageTotal = stageCount(data.stages);
 
   return (
     <>
@@ -71,7 +75,7 @@ export function OverviewPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="grid grid-cols-2 gap-3">
-            <MiniStat label="Leads" value={data.totals.leads} />
+            <MiniStat label="Leads" value={stageLeads} />
             <MiniStat label="Contacted" value={data.totals.contacted} />
             <MiniStat label="Responded" value={data.totals.responded} hint={pct(data.totals.response_rate_pct)} />
             <MiniStat label="Pilots / paying" value={`${data.totals.pilots} / ${data.totals.paying}`} />
@@ -111,7 +115,7 @@ export function OverviewPage() {
                 {data.followups_due.map((f) => (
                   <TableRow key={`${f.contact_id}:${f.channel}`}>
                     <TableCell>
-                      <Link className="font-medium hover:text-primary hover:underline" to={contactHrefById(f.contact_id)}>
+                      <Link className="font-medium hover:text-primary hover:underline" to={contactHrefById(f.contact_id, f.lifecycle)}>
                         {f.name ?? f.contact_id.slice(0, 8)}
                       </Link>
                     </TableCell>
@@ -143,7 +147,7 @@ export function OverviewPage() {
                 {data.new_replies.map((e) => (
                   <TableRow key={e.id}>
                     <TableCell>
-                      <Link className="font-medium hover:text-primary hover:underline" to={contactHrefById(e.contactId)}>
+                      <Link className="font-medium hover:text-primary hover:underline" to={contactHrefById(e.contactId, e.lifecycle)}>
                         {e.name ?? e.contactId.slice(0, 8)}
                       </Link>
                     </TableCell>
@@ -173,7 +177,7 @@ export function OverviewPage() {
                 {data.linkedin_awaiting_first_message.map((x) => (
                   <TableRow key={x.contact_id}>
                     <TableCell>
-                      <Link className="font-medium hover:text-primary hover:underline" to={contactHrefById(x.contact_id)}>
+                      <Link className="font-medium hover:text-primary hover:underline" to={contactHrefById(x.contact_id, x.lifecycle)}>
                         {x.name ?? x.contact_id.slice(0, 8)}
                       </Link>
                     </TableCell>
@@ -195,7 +199,7 @@ export function OverviewPage() {
                 <div key={d.id} className="flex gap-3 p-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <Link className="text-sm font-medium hover:text-primary hover:underline" to={contactHrefById(d.contact_id)}>
+                      <Link className="text-sm font-medium hover:text-primary hover:underline" to={contactHrefById(d.contact_id, d.lifecycle)}>
                         {d.name ?? d.contact_id.slice(0, 8)}
                       </Link>
                       <Badge variant="outline">{titleCase(d.channel)}</Badge>
@@ -227,7 +231,7 @@ export function OverviewPage() {
                 {data.stale.map((x) => (
                   <TableRow key={`${x.contact_id}:${x.channel}`}>
                     <TableCell>
-                      <Link className="font-medium hover:text-primary hover:underline" to={contactHrefById(x.contact_id)}>
+                      <Link className="font-medium hover:text-primary hover:underline" to={contactHrefById(x.contact_id, x.lifecycle)}>
                         {x.name ?? x.contact_id.slice(0, 8)}
                       </Link>
                     </TableCell>
@@ -243,14 +247,14 @@ export function OverviewPage() {
           )}
         </SectionCard>
 
-        <SectionCard title="Stages" count={data.totals.leads} icon={Users}>
+        <SectionCard title="Stages" count={stageTotal} icon={Users}>
           <div className="space-y-2 p-4">
             {Object.entries(data.stages)
               .filter(([, n]) => n > 0)
               .toSorted((a, b) => b[1] - a[1])
               .map(([stage, n]) => (
                 <div key={stage} className="flex items-center gap-3">
-                  <Link className="w-36 shrink-0 truncate text-xs font-medium hover:text-primary hover:underline" to={`/leads?stage=${stage}`}>
+                  <Link className="w-36 shrink-0 truncate text-xs font-medium hover:text-primary hover:underline" to={stageHref(stage)}>
                     {titleCase(stage)}
                   </Link>
                   <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">

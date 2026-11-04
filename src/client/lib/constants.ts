@@ -1,18 +1,9 @@
-export const STAGES = [
-  "new",
-  "qualified",
-  "drafted",
-  "contacted",
-  "connection_pending",
-  "connected",
-  "responded",
-  "call_booked",
-  "pilot",
-  "paying",
-  "lost",
-  "do_not_contact",
-] as const;
+import { STAGES } from "../../lifecycle";
 
-export const LEAD_STAGES = ["new", "qualified", "drafted", "contacted", "connection_pending", "connected"] as const;
-export const CONTACT_STAGES = ["responded", "call_booked", "pilot", "paying"] as const;
-export const ARCHIVED_STAGES = ["lost", "do_not_contact"] as const;
+export { STAGES };
+export { LEAD_STAGES, CONTACT_STAGES, ARCHIVED_STAGES } from "../../lifecycle";
+
+/** Sums stage counts for one lifecycle (or every stage when no group is given). */
+export function stageCount(stages: Record<string, number>, group: readonly string[] = STAGES) {
+  return group.reduce((total, stage) => total + (stages[stage] ?? 0), 0);
+}

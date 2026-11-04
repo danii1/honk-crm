@@ -7,8 +7,7 @@ import type { Env } from "./env";
 import { handleMcp } from "./mcp";
 import { AuthError, resolveOrgContext, resolveUser } from "./middleware";
 import { acceptInvitePage, consentPage, signInPage } from "./pages";
-import { createDb, type DB } from "./repository";
-import { CrmService } from "./service";
+import { createDb, Repository, type DB } from "./repository";
 import { acceptInvite, switchOrg } from "./team";
 import { callTool, TOOL_INDEX } from "./tools";
 
@@ -111,9 +110,10 @@ const dashAuth = createMiddleware<{ Bindings: Env; Variables: Vars }>(async (c, 
 });
 
 /** Serve the built index.html through the static-assets binding, keeping auth in front of every page. */
-async function serveApp(c: { env: Env; req: { url: string; raw: Request } }) {
+export async function serveApp(c: { env: Env; req: { url: string; raw: Request } }) {
   try {
-    const res = await c.env.ASSETS?.fetch(new URL("/index.html", c.req.url));
+    // Fetch the SPA entrypoint directly: ASSETS redirects /index.html to /, which breaks test doubles and adds a hop.
+    const res = await c.env.ASSETS?.fetch(new URL("/", c.req.url));
     if (res?.ok) {
       const headers = new Headers(res.headers);
       headers.set("content-type", "text/html; charset=utf-8");
@@ -128,18 +128,13 @@ async function serveApp(c: { env: Env; req: { url: string; raw: Request } }) {
 
 app.use("/dashboard", dashAuth);
 app.use("/dashboard/*", dashAuth);
-const svcOf = (c: { get: (k: "db" | "org") => unknown }) => new CrmService(c.get("db") as DB, c.get("org") as OrgContext);
 
 // Keep server-side 404s for detail pages; the SPA handles the rest of the routing.
 for (const base of ["contacts", "leads"] as const) {
   app.get(`/dashboard/${base}/:id`, async (c) => {
-    try {
-      await svcOf(c).get_contact({ id: c.req.param("id") });
-      return serveApp(c);
-    } catch (e) {
-      if (e instanceof CrmError && e.code === "not_found") return c.html("<p>Contact not found. <a href='/dashboard/contacts'>Back</a></p>", 404);
-      throw e;
-    }
+    const contact = await new Repository(c.get("db"), c.get("org")).contactById(c.req.param("id"));
+    if (!contact) return c.html("<p>Contact not found. <a href='/dashboard/contacts'>Back</a></p>", 404);
+    return serveApp(c);
   });
 }
 app.get("/dashboard", serveApp);

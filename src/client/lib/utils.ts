@@ -57,3 +57,13 @@ export function titleCase(value?: string | null) {
 export function pct(n?: number | null) {
   return n === null || n === undefined ? "—" : `${n}%`;
 }
+
+/** Render-time URL allow-list: http(s) and mailto only; bare hosts get https://. */
+export function safeExternalUrl(value?: string | null): string | null {
+  const v = value?.trim();
+  if (!v) return null;
+  if (/^https?:\/\//i.test(v)) return v;
+  if (/^mailto:[^\s]+$/i.test(v)) return v;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(v)) return null;
+  return `https://${v.replace(/^\/\//, "")}`;
+}

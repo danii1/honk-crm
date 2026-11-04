@@ -114,6 +114,7 @@ export interface EventRow {
   id: string;
   contactId: string;
   name?: string | null;
+  lifecycle?: Lifecycle | null;
   channel: string;
   type: string;
   summary?: string | null;
@@ -142,6 +143,8 @@ export interface ContactDetail extends Contact {
 
 export interface ContactListResponse {
   contacts: Contact[];
+  /** Number of contacts matching the current filters (not limited by the page size). */
+  total: number;
   counts: { lead: number; contact: number; archived: number; total: number; stages: Record<string, number> };
 }
 
@@ -155,14 +158,14 @@ export interface PipelineSummary {
 export interface Overview {
   date: string;
   tz: string;
-  followups_due: { contact_id: string; name?: string | null; channel: string; stage: string; next_followup_at?: string | null; next_step?: string | null; overdue?: boolean }[];
+  followups_due: { contact_id: string; name?: string | null; lifecycle?: Lifecycle | null; channel: string; stage: string; next_followup_at?: string | null; next_step?: string | null; overdue?: boolean }[];
   tasks_due: { task: { id: string; title: string; dueAt?: string | null }; contact?: { id: string; name?: string | null } | null }[];
-  linkedin_awaiting_first_message: { contact_id: string; name?: string | null; linkedin?: string | null; stage: string; next_step?: string | null }[];
+  linkedin_awaiting_first_message: { contact_id: string; name?: string | null; lifecycle?: Lifecycle | null; linkedin?: string | null; stage: string; next_step?: string | null }[];
   new_replies: EventRow[];
   events_last_24h: EventRow[];
-  drafts_pending: { id: string; contact_id: string; name?: string | null; channel: string; state: string; text: string; intent_url?: string | null; created_at?: string | null }[];
+  drafts_pending: { id: string; contact_id: string; name?: string | null; lifecycle?: Lifecycle | null; channel: string; state: string; text: string; intent_url?: string | null; created_at?: string | null }[];
   x_pacing: { date: string; drafted_today: number; sent_today: number; remaining_today: number; last_sent_at?: string | null; minutes_since_last_send?: number | null; gap_ok: boolean; cap_ok: boolean; ok_to_send: boolean; next_allowed_at?: string | null };
-  stale: { contact_id: string; name?: string | null; channel: string; stage: string; last_touch_at?: string | null; days_since: number; threshold_days: number }[];
+  stale: { contact_id: string; name?: string | null; lifecycle?: Lifecycle | null; channel: string; stage: string; last_touch_at?: string | null; days_since: number; threshold_days: number }[];
   goal: { target: string; paying: number; pilots: number; met: boolean; paying_progress_pct: number | null; pilots_progress_pct: number | null; days_left: number };
   totals: { leads: number; contacted: number; responded: number; response_rate_pct: number | null; call_booked: number; pilots: number; paying: number };
   stages: Record<string, number>;
@@ -219,7 +222,7 @@ export const getPipeline = () => api<PipelineSummary>("pipeline_summary");
 export const listContactsView = (params: Record<string, unknown> = {}) => api<ContactListResponse>("list_contacts_view", params);
 export const getContact = (id: string, includePrivate = false) => api<ContactDetail>("get_contact", { id, ...(includePrivate && { include_private: true }) });
 export const getActivity = (entityId: string) => api<Activity[]>("get_activity", { entity_type: "contact", entity_id: entityId, limit: 100 });
-export const listCompanies = (query?: string) => api<{ companies: Company[]; total: number }>("list_companies", { query, limit: 500 });
+export const listCompanies = (query?: string, offset = 0) => api<{ companies: Company[]; total: number }>("list_companies", { query, limit: 500, offset });
 export const listCompetitors = () => api<Competitor[]>("list_competitors", {});
 export const listCampaigns = () => api<{ id: string; name: string; status: string }[]>("list_campaigns", {});
 export const listChannels = () => api<{ channels: ChannelDef[]; extra_sources: string[] }>("list_channels", {});
