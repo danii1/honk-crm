@@ -24,7 +24,7 @@ app.use("*", async (c, next) => {
 app.onError((err, c) => {
   if (err instanceof AuthError) return c.json({ error: err.message }, err.status);
   if (err instanceof CrmError) {
-    const status = { not_found: 404, conflict: 409, forbidden: 403, invalid: 400 }[err.code] as 404 | 409 | 403 | 400;
+    const status = { not_found: 404, conflict: 409, forbidden: 403, invalid: 400, blocked: 422 }[err.code] as 404 | 409 | 403 | 400 | 422;
     return c.json({ error: err.code, message: err.message }, status);
   }
   if (err?.name === "ZodError") return c.json({ error: "invalid", issues: (err as unknown as { issues: unknown }).issues }, 400);

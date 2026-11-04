@@ -18,8 +18,19 @@ const updatedAt = () =>
     .notNull()
     .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`);
 
-export const STAGES = ["new", "contacted", "replied", "meeting", "won", "lost"] as const;
-export const CHANNELS = ["email", "linkedin", "x", "other"] as const;
+export const STAGES = [
+  "new", "qualified", "drafted", "contacted", "connection_pending", "connected",
+  "responded", "call_booked", "pilot", "paying", "lost", "do_not_contact",
+] as const;
+/** Channels with per-contact state. */
+export const OUTREACH_CHANNELS = ["x", "linkedin", "reddit", "email"] as const;
+export const CHANNELS = ["email", "linkedin", "x", "reddit", "other"] as const;
+export const SOURCES = ["x", "linkedin", "reddit", "web", "prowlo"] as const;
+export const CONTACT_TYPES = ["lead", "competitor"] as const;
+export const DRAFT_STATES = ["drafted", "approved", "sent", "discarded"] as const;
+export const BLOCK_KINDS = ["name", "handle", "domain"] as const;
+export type OutreachChannel = (typeof OUTREACH_CHANNELS)[number];
+export type DraftState = (typeof DRAFT_STATES)[number];
 export const DIRECTIONS = ["outbound", "inbound"] as const;
 export const TOUCH_STATUSES = ["draft", "sent", "replied", "bounced"] as const;
 export type Stage = (typeof STAGES)[number];
@@ -33,6 +44,10 @@ export const companies = sqliteTable(
     domain: text("domain"), // normalized: lowercase, no www., no scheme
     website: text("website"),
     linkedin: text("linkedin"),
+    teamSize: integer("team_size"),
+    stack: text("stack", { mode: "json" }).$type<string[]>(),
+    type: text("type"), // agency | startup | enterprise | ...
+    publishedEmail: text("published_email"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -53,6 +68,20 @@ export const sequences = sqliteTable(
   (t) => [uniqueIndex("sequences_org_name_uq").on(t.orgId, t.name)],
 );
 
+export const campaigns = sqliteTable(
+  "campaigns",
+  {
+    id: id(),
+    orgId: orgId(),
+    name: text("name").notNull(),
+    offerText: text("offer_text"),
+    status: text("status", { enum: ["active", "paused", "archived"] }).notNull().default("active"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("campaigns_org_name_uq").on(t.orgId, t.name)],
+);
+
 export const contacts = sqliteTable(
   "contacts",
   {
@@ -60,11 +89,25 @@ export const contacts = sqliteTable(
     orgId: orgId(),
     email: text("email"), // normalized: trimmed + lowercase
     name: text("name"),
-    title: text("title"),
-    linkedin: text("linkedin"),
-    x: text("x"),
+    role: text("title"),
+    linkedin: text("linkedin"), // normalized: linkedin.com/in/<slug>
+    xHandle: text("x"), // normalized: lowercase, no @
+    redditUser: text("reddit_user"), // normalized: lowercase, no u/
+    github: text("github"), // normalized: lowercase login
     companyId: text("company_id").references(() => companies.id, { onDelete: "set null" }),
     sequenceId: text("sequence_id").references(() => sequences.id, { onDelete: "set null" }),
+    campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
+    contactType: text("contact_type", { enum: CONTACT_TYPES }).notNull().default("lead"),
+    source: text("source", { enum: SOURCES }),
+    bioSummary: text("bio_summary"),
+    followers: integer("followers"),
+    estTeamSize: integer("est_team_size"),
+    score: integer("score"),
+    firstSeenAt: integer("first_seen_at", { mode: "timestamp_ms" }),
+    notesText: text("notes"),
+    signalPostUrl: text("signal_post_url"),
+    signalDate: text("signal_date"),
+    signalSummary: text("signal_summary"),
     stage: text("stage", { enum: STAGES }).notNull().default("new"),
     stageChangedAt: integer("stage_changed_at", { mode: "timestamp_ms" }),
     lastTouchAt: integer("last_touch_at", { mode: "timestamp_ms" }),
@@ -73,6 +116,12 @@ export const contacts = sqliteTable(
   },
   (t) => [
     uniqueIndex("contacts_org_email_uq").on(t.orgId, t.email),
+    uniqueIndex("contacts_org_linkedin_uq").on(t.orgId, t.linkedin),
+    uniqueIndex("contacts_org_x_uq").on(t.orgId, t.xHandle),
+    uniqueIndex("contacts_org_reddit_uq").on(t.orgId, t.redditUser),
+    uniqueIndex("contacts_org_github_uq").on(t.orgId, t.github),
+    index("contacts_org_source_idx").on(t.orgId, t.source),
+    index("contacts_org_campaign_idx").on(t.orgId, t.campaignId),
     index("contacts_org_company_idx").on(t.orgId, t.companyId),
     index("contacts_org_stage_idx").on(t.orgId, t.stage),
   ],
@@ -188,4 +237,68 @@ export const idempotencyKeys = sqliteTable(
     createdAt: createdAt(),
   },
   (t) => [primaryKey({ columns: [t.orgId, t.key] })],
+);
+
+/** Per-contact, per-channel pipeline state; next_followup_at doubles as the reminder. */
+export const channelStates = sqliteTable(
+  "channel_states",
+  {
+    id: id(),
+    orgId: orgId(),
+    contactId: text("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    channel: text("channel", { enum: OUTREACH_CHANNELS }).notNull(),
+    stage: text("stage", { enum: STAGES }).notNull().default("new"),
+    lastTouchAt: integer("last_touch_at", { mode: "timestamp_ms" }),
+    nextFollowupAt: integer("next_followup_at", { mode: "timestamp_ms" }),
+    nextStep: text("next_step"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("channel_states_org_contact_channel_uq").on(t.orgId, t.contactId, t.channel),
+    index("channel_states_org_followup_idx").on(t.orgId, t.nextFollowupAt),
+    index("channel_states_org_channel_stage_idx").on(t.orgId, t.channel, t.stage),
+  ],
+);
+
+/** Competitors we must never pitch. value is normalized per kind. */
+export const blocklist = sqliteTable(
+  "blocklist",
+  {
+    id: id(),
+    orgId: orgId(),
+    kind: text("kind", { enum: BLOCK_KINDS }).notNull(),
+    value: text("value").notNull(),
+    label: text("label"),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("blocklist_org_kind_value_uq").on(t.orgId, t.kind, t.value)],
+);
+
+/** Message drafts. The CRM never sends; agents mark a draft sent after sending it themselves. */
+export const drafts = sqliteTable(
+  "drafts",
+  {
+    id: id(),
+    orgId: orgId(),
+    contactId: text("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    channel: text("channel", { enum: OUTREACH_CHANNELS }).notNull(),
+    campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
+    text: text("text").notNull(),
+    intentUrl: text("intent_url"),
+    state: text("state", { enum: DRAFT_STATES }).notNull().default("drafted"),
+    stateChangedAt: integer("state_changed_at", { mode: "timestamp_ms" }),
+    sentAt: integer("sent_at", { mode: "timestamp_ms" }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("drafts_org_state_idx").on(t.orgId, t.state),
+    index("drafts_org_contact_idx").on(t.orgId, t.contactId),
+    index("drafts_org_channel_created_idx").on(t.orgId, t.channel, t.createdAt),
+  ],
 );

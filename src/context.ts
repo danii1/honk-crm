@@ -11,7 +11,7 @@ export interface OrgContext {
 
 export class CrmError extends Error {
   constructor(
-    public code: "not_found" | "conflict" | "forbidden" | "invalid",
+    public code: "not_found" | "conflict" | "forbidden" | "invalid" | "blocked",
     message: string,
   ) {
     super(message);

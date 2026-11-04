@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, like, lte, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, like, lt, lte, ne, or, sql, type SQL } from "drizzle-orm";
 import { drizzle, type DrizzleD1Database } from "drizzle-orm/d1";
 import * as s from "./db/schema";
 import { CrmError, type OrgContext } from "./context";
@@ -59,6 +59,58 @@ export class Repository {
       where: and(eq(s.contacts.orgId, this.orgId), eq(s.contacts.email, email)),
     });
   }
+  async contactsByIdentity(ids: { email?: string | null; linkedin?: string | null; xHandle?: string | null; redditUser?: string | null; github?: string | null }) {
+    const c = s.contacts;
+    const ors = [
+      ids.email ? eq(c.email, ids.email) : undefined,
+      ids.linkedin ? eq(c.linkedin, ids.linkedin) : undefined,
+      ids.xHandle ? eq(c.xHandle, ids.xHandle) : undefined,
+      ids.redditUser ? eq(c.redditUser, ids.redditUser) : undefined,
+      ids.github ? eq(c.github, ids.github) : undefined,
+    ].filter((x): x is SQL => !!x);
+    if (!ors.length) return [];
+    return this.db.select().from(c).where(and(eq(c.orgId, this.orgId), or(...ors)));
+  }
+  async contactsByDomain(domain: string) {
+    const c = s.contacts;
+    return this.db
+      .select()
+      .from(c)
+      .where(
+        and(
+          eq(c.orgId, this.orgId),
+          or(
+            like(c.email, `%@${domain}`),
+            inArray(c.companyId, this.db.select({ id: s.companies.id }).from(s.companies).where(and(eq(s.companies.orgId, this.orgId), eq(s.companies.domain, domain)))),
+          ),
+        ),
+      );
+  }
+  async allContacts() {
+    return this.db.select().from(s.contacts).where(eq(s.contacts.orgId, this.orgId));
+  }
+  async allCompanies() {
+    return this.db.select().from(s.companies).where(eq(s.companies.orgId, this.orgId));
+  }
+  async companyByName(name: string) {
+    return this.db.query.companies.findFirst({
+      where: and(eq(s.companies.orgId, this.orgId), sql`lower(${s.companies.name}) = ${name.trim().toLowerCase()}`),
+    });
+  }
+  async listContacts(q: { stage?: s.Stage; source?: string; campaignId?: string; contactType?: string; channel?: s.OutreachChannel; channelStage?: s.Stage; limit: number }) {
+    const c = s.contacts;
+    const conds: (SQL | undefined)[] = [eq(c.orgId, this.orgId)];
+    if (q.stage) conds.push(eq(c.stage, q.stage));
+    if (q.source) conds.push(eq(c.source, q.source as (typeof s.SOURCES)[number]));
+    if (q.campaignId) conds.push(eq(c.campaignId, q.campaignId));
+    if (q.contactType) conds.push(eq(c.contactType, q.contactType as (typeof s.CONTACT_TYPES)[number]));
+    if (q.channel || q.channelStage) {
+      const cs = s.channelStates;
+      const sub = [eq(cs.orgId, this.orgId), q.channel ? eq(cs.channel, q.channel) : undefined, q.channelStage ? eq(cs.stage, q.channelStage) : undefined];
+      conds.push(inArray(c.id, this.db.select({ id: cs.contactId }).from(cs).where(and(...sub))));
+    }
+    return this.db.select().from(c).where(and(...conds)).orderBy(desc(c.updatedAt)).limit(q.limit);
+  }
   async contactByLinkedin(linkedin: string) {
     return this.db.query.contacts.findFirst({
       where: and(eq(s.contacts.orgId, this.orgId), eq(s.contacts.linkedin, linkedin)),
@@ -85,7 +137,10 @@ export class Repository {
         or(
           like(sql`lower(${s.contacts.name})`, p),
           like(s.contacts.email, p),
-          like(sql`lower(${s.contacts.title})`, p),
+          like(sql`lower(${s.contacts.role})`, p),
+          like(s.contacts.xHandle, p),
+          like(s.contacts.github, p),
+          like(s.contacts.redditUser, p),
           like(s.contacts.linkedin, p),
           inArray(
             s.contacts.companyId,
@@ -255,5 +310,158 @@ export class Repository {
       .insert(s.idempotencyKeys)
       .values({ orgId: this.orgId, key, operation, requestHash, response: response as object })
       .onConflictDoNothing();
+  }
+
+  // ---- channel states
+  async channelState(contactId: string, channel: s.OutreachChannel) {
+    return this.db.query.channelStates.findFirst({
+      where: and(eq(s.channelStates.orgId, this.orgId), eq(s.channelStates.contactId, contactId), eq(s.channelStates.channel, channel)),
+    });
+  }
+  async channelStatesFor(contactId: string) {
+    return this.db.select().from(s.channelStates).where(and(eq(s.channelStates.orgId, this.orgId), eq(s.channelStates.contactId, contactId)));
+  }
+  async allChannelStates() {
+    return this.db.select().from(s.channelStates).where(eq(s.channelStates.orgId, this.orgId));
+  }
+  async upsertChannelState(contactId: string, channel: s.OutreachChannel, v: Partial<Pick<typeof s.channelStates.$inferInsert, "stage" | "lastTouchAt" | "nextFollowupAt" | "nextStep">>) {
+    const [row] = await this.db
+      .insert(s.channelStates)
+      .values({ orgId: this.orgId, contactId, channel, ...v })
+      .onConflictDoUpdate({ target: [s.channelStates.orgId, s.channelStates.contactId, s.channelStates.channel], set: { ...v, updatedAt: new Date() } })
+      .returning();
+    return row!;
+  }
+  async followupsDueBefore(before: Date, limit: number) {
+    const cs = s.channelStates;
+    return this.db
+      .select({ state: cs, contact: s.contacts })
+      .from(cs)
+      .innerJoin(s.contacts, and(eq(s.contacts.id, cs.contactId), eq(s.contacts.orgId, this.orgId)))
+      .where(and(eq(cs.orgId, this.orgId), isNotNull(cs.nextFollowupAt), lt(cs.nextFollowupAt, before), sql`${cs.stage} not in ('lost','do_not_contact','paying')`))
+      .orderBy(asc(cs.nextFollowupAt))
+      .limit(limit);
+  }
+  async staleStates(before: Date, stages: s.Stage[], limit: number) {
+    const cs = s.channelStates;
+    return this.db
+      .select({ state: cs, contact: s.contacts })
+      .from(cs)
+      .innerJoin(s.contacts, and(eq(s.contacts.id, cs.contactId), eq(s.contacts.orgId, this.orgId)))
+      .where(and(eq(cs.orgId, this.orgId), inArray(cs.stage, stages), isNotNull(cs.lastTouchAt), lt(cs.lastTouchAt, before)))
+      .orderBy(asc(cs.lastTouchAt))
+      .limit(limit);
+  }
+  async statesByChannelStage(channel: s.OutreachChannel, stages: s.Stage[]) {
+    const cs = s.channelStates;
+    return this.db
+      .select({ state: cs, contact: s.contacts })
+      .from(cs)
+      .innerJoin(s.contacts, and(eq(s.contacts.id, cs.contactId), eq(s.contacts.orgId, this.orgId)))
+      .where(and(eq(cs.orgId, this.orgId), eq(cs.channel, channel), inArray(cs.stage, stages)));
+  }
+  async outboundTouchContactIds(channel: (typeof s.CHANNELS)[number]) {
+    const t = s.outreachTouches;
+    const rows = await this.db
+      .selectDistinct({ id: t.contactId })
+      .from(t)
+      .where(and(eq(t.orgId, this.orgId), eq(t.channel, channel), eq(t.direction, "outbound"), ne(t.status, "draft")));
+    return new Set(rows.map((r) => r.id));
+  }
+  async touchesSince(channel: (typeof s.CHANNELS)[number], since: Date) {
+    const t = s.outreachTouches;
+    return this.db
+      .select()
+      .from(t)
+      .where(and(eq(t.orgId, this.orgId), eq(t.channel, channel), eq(t.direction, "outbound"), eq(t.status, "sent"), gte(t.sentAt, since)))
+      .orderBy(desc(t.sentAt));
+  }
+  async lastSentTouch(channel: (typeof s.CHANNELS)[number]) {
+    const t = s.outreachTouches;
+    const [row] = await this.db
+      .select()
+      .from(t)
+      .where(and(eq(t.orgId, this.orgId), eq(t.channel, channel), eq(t.direction, "outbound"), eq(t.status, "sent"), isNotNull(t.sentAt)))
+      .orderBy(desc(t.sentAt))
+      .limit(1);
+    return row;
+  }
+  async allTouches() {
+    return this.db.select().from(s.outreachTouches).where(eq(s.outreachTouches.orgId, this.orgId));
+  }
+
+  // ---- blocklist
+  async blocklistAll() {
+    return this.db.select().from(s.blocklist).where(eq(s.blocklist.orgId, this.orgId)).orderBy(asc(s.blocklist.kind), asc(s.blocklist.value));
+  }
+  async insertBlock(kind: (typeof s.BLOCK_KINDS)[number], value: string, label?: string | null) {
+    await this.db.insert(s.blocklist).values({ orgId: this.orgId, kind, value, label }).onConflictDoNothing();
+    return (await this.db.query.blocklist.findFirst({
+      where: and(eq(s.blocklist.orgId, this.orgId), eq(s.blocklist.kind, kind), eq(s.blocklist.value, value)),
+    }))!;
+  }
+  async deleteBlock(id: string) {
+    const rows = await this.db.delete(s.blocklist).where(and(eq(s.blocklist.orgId, this.orgId), eq(s.blocklist.id, id))).returning();
+    return rows[0];
+  }
+
+  // ---- campaigns
+  async campaignById(id: string) {
+    return this.db.query.campaigns.findFirst({ where: and(eq(s.campaigns.orgId, this.orgId), eq(s.campaigns.id, id)) });
+  }
+  async campaignByName(name: string) {
+    return this.db.query.campaigns.findFirst({ where: and(eq(s.campaigns.orgId, this.orgId), eq(s.campaigns.name, name)) });
+  }
+  async insertCampaign(v: { name: string; offerText?: string | null; status?: "active" | "paused" | "archived" }) {
+    const [row] = await this.db.insert(s.campaigns).values({ ...v, orgId: this.orgId }).returning();
+    return row!;
+  }
+  async updateCampaign(id: string, v: Partial<typeof s.campaigns.$inferInsert>) {
+    const [row] = await this.db
+      .update(s.campaigns)
+      .set({ ...v, orgId: this.orgId, updatedAt: new Date() })
+      .where(and(eq(s.campaigns.orgId, this.orgId), eq(s.campaigns.id, id)))
+      .returning();
+    return row!;
+  }
+  async listCampaigns() {
+    return this.db.select().from(s.campaigns).where(eq(s.campaigns.orgId, this.orgId)).orderBy(asc(s.campaigns.name));
+  }
+
+  // ---- drafts
+  async insertDraft(v: Omit<typeof s.drafts.$inferInsert, "orgId" | "id">) {
+    const [row] = await this.db.insert(s.drafts).values({ ...v, orgId: this.orgId }).returning();
+    return row!;
+  }
+  async draftById(id: string) {
+    return this.db.query.drafts.findFirst({ where: and(eq(s.drafts.orgId, this.orgId), eq(s.drafts.id, id)) });
+  }
+  async updateDraft(id: string, v: Partial<typeof s.drafts.$inferInsert>) {
+    const [row] = await this.db
+      .update(s.drafts)
+      .set({ ...v, orgId: this.orgId, updatedAt: new Date() })
+      .where(and(eq(s.drafts.orgId, this.orgId), eq(s.drafts.id, id)))
+      .returning();
+    return row!;
+  }
+  async listDrafts(q: { state?: s.DraftState; channel?: s.OutreachChannel; contactId?: string; campaignId?: string; limit: number }) {
+    const d = s.drafts;
+    const conds = [
+      eq(d.orgId, this.orgId),
+      q.state ? eq(d.state, q.state) : undefined,
+      q.channel ? eq(d.channel, q.channel) : undefined,
+      q.contactId ? eq(d.contactId, q.contactId) : undefined,
+      q.campaignId ? eq(d.campaignId, q.campaignId) : undefined,
+    ];
+    return this.db.select().from(d).where(and(...conds)).orderBy(desc(d.createdAt)).limit(q.limit);
+  }
+  async draftsCreatedSince(channel: s.OutreachChannel, since: Date) {
+    const d = s.drafts;
+    return this.db.select().from(d).where(and(eq(d.orgId, this.orgId), eq(d.channel, channel), gte(d.createdAt, since)));
+  }
+  async sentDraftContactIds(channel: s.OutreachChannel) {
+    const d = s.drafts;
+    const rows = await this.db.selectDistinct({ id: d.contactId }).from(d).where(and(eq(d.orgId, this.orgId), eq(d.channel, channel), eq(d.state, "sent")));
+    return new Set(rows.map((r) => r.id));
   }
 }

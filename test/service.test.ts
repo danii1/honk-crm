@@ -15,7 +15,7 @@ describe("tenant isolation", () => {
 
     await expect(b.svc.get_contact({ id: contact.id })).rejects.toMatchObject({ code: "not_found" });
     await expect(b.svc.log_touch({ contact_id: contact.id, channel: "email" })).rejects.toMatchObject({ code: "not_found" });
-    await expect(b.svc.update_stage({ contact_id: contact.id, stage: "won" })).rejects.toMatchObject({ code: "not_found" });
+    await expect(b.svc.update_stage({ contact_id: contact.id, stage: "paying" })).rejects.toMatchObject({ code: "not_found" });
     await expect(b.svc.add_note({ entity_id: contact.id, body: "x" })).rejects.toMatchObject({ code: "not_found" });
 
     expect((await b.svc.search_contacts({ query: "acme" })).map((c) => c.id)).toEqual([inB.contact.id]);
@@ -46,7 +46,7 @@ describe("dedupe", () => {
     expect(again.deduped).toBe(true);
     expect(again.contact.id).toBe(first.contact.id);
     expect(again.contact.name).toBe("Jane");
-    expect(again.contact.title).toBe("CTO");
+    expect(again.contact.role).toBe("CTO");
 
     const co = await svc.upsert_company({ domain: "https://www.stripe.com/about" });
     expect(co.company.id).toBe(first.contact.companyId);
@@ -108,7 +108,7 @@ describe("activity log", () => {
     const { svc, ctx } = await makeOrg();
     const { contact } = await svc.upsert_contact({ email: "log@x.io", reason: "imported from list" });
     await svc.log_touch({ contact_id: contact.id, channel: "email" });
-    await svc.update_stage({ contact_id: contact.id, stage: "meeting", reason: "booked call" });
+    await svc.update_stage({ contact_id: contact.id, stage: "call_booked", reason: "booked call" });
     await svc.add_note({ entity_id: contact.id, body: "likes golf" });
     const task = await svc.create_task({ title: "send deck", contact_id: contact.id });
     await svc.complete_task({ id: task.id });
@@ -119,7 +119,7 @@ describe("activity log", () => {
       expect(actions).toContain(a);
     expect(log.every((r) => r.actorId === ctx.actor.id && r.actorType === "agent")).toBe(true);
     expect(log.find((r) => r.action === "contact.stage_changed")?.reason).toBe("booked call");
-    expect((await svc.get_contact({ id: contact.id })).stage).toBe("meeting");
+    expect((await svc.get_contact({ id: contact.id })).stage).toBe("call_booked");
   });
 
   it("idempotent replays do not add log rows", async () => {
