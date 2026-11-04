@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { BLOCK_KINDS, CHANNELS, CONTACT_TYPES, DIRECTIONS, DRAFT_STATES, OUTREACH_CHANNELS, SOURCES, STAGES, TOUCH_STATUSES, type OutreachChannel, type Stage } from "./db/schema";
-import { CrmError, requireScope, type OrgContext } from "./context";
+import { CrmError, requireRole, requireScope, type OrgContext } from "./context";
 import {
   companyDomainFromEmail, endOfLocalDay, localDateString, normalizeDomain, normalizeEmail, normalizeGithub, normalizeLinkedin,
   normalizeName, normalizeRedditUser, normalizeUrl, normalizeXHandle, sha256, similarNames, startOfLocalDay,
@@ -680,6 +680,7 @@ export class CrmService {
 
   async add_competitor(raw: Input<"add_competitor">) {
     const i = schemas.add_competitor.parse(raw);
+    requireRole(this.ctx, "admin");
     return this.idempotent("add_competitor", i, async () => {
       const n = normalizeBlockValue(i.kind, i.value);
       if (!n) throw new CrmError("invalid", `could not normalize ${JSON.stringify(i.value)}`);
@@ -691,6 +692,7 @@ export class CrmService {
 
   async remove_competitor(raw: Input<"remove_competitor">) {
     const i = schemas.remove_competitor.parse(raw);
+    requireRole(this.ctx, "admin");
     return this.idempotent("remove_competitor", i, async () => {
       const gone = await this.repo.deleteBlock(i.id);
       if (!gone) throw new CrmError("not_found", `blocklist entry ${i.id} not found`);
@@ -789,6 +791,7 @@ export class CrmService {
 
   async upsert_campaign(raw: Input<"upsert_campaign">) {
     const i = schemas.upsert_campaign.parse(raw);
+    requireRole(this.ctx, "admin");
     return this.idempotent("upsert_campaign", i, async () => {
       const existing = await this.repo.campaignByName(i.name.trim());
       const fields = { ...(i.offer_text !== undefined && { offerText: i.offer_text }), ...(i.status && { status: i.status }) };
@@ -1292,6 +1295,8 @@ export const TOOL_DESCRIPTIONS: Record<keyof typeof schemas, string> = {
   import_leads_csv: "Import a leads CSV (handle,name,profile_url,...,status,first_seen,notes). Maps status->stage, extracts emails/LinkedIn/GitHub/Reddit/X from notes, dedupes, skips competitors, idempotent on re-run. dry_run defaults to TRUE: returns the report without writing.",
   export_csv: "Export contacts as CSV (import columns first, then ids, identities and per-channel stage/follow-up).",
 };
+/** Tools that need admin (or owner) on top of crm:write. */
+export const ADMIN_CRM_TOOLS = new Set<string>(["add_competitor", "remove_competitor", "upsert_campaign"]);
 export const TOOL_NAMES = Object.keys(schemas) as (keyof typeof schemas)[];
 export const WRITE_TOOLS = new Set<keyof typeof schemas>([
   "upsert_contact", "upsert_company", "log_touch", "update_stage", "create_task", "complete_task", "add_note",

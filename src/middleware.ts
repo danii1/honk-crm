@@ -3,6 +3,7 @@ import { createLocalJWKSet, jwtVerify, type JWTPayload } from "jose";
 import { API_KEY_PREFIX, type Auth } from "./auth";
 import { member } from "./db/schema";
 import { SCOPES, type OrgContext } from "./context";
+import { isRole, parseRole, scopesForRole, type Role } from "./roles";
 import type { DB } from "./repository";
 
 export class AuthError extends Error {
@@ -28,35 +29,61 @@ function bearer(req: Request): string | null {
   return h?.toLowerCase().startsWith("bearer ") ? h.slice(7).trim() : null;
 }
 
+export function keyRole(metadata: unknown): Role {
+  const m = typeof metadata === "string" ? (JSON.parse(metadata) as Record<string, unknown>) : (metadata as Record<string, unknown> | null);
+  return isRole(m?.role) ? m.role : "member";
+}
+const intersect = (a: string[], b: string[]) => a.filter((s) => b.includes(s));
+
+export interface ResolvedUser {
+  userId: string;
+  sessionId?: string;
+  activeOrgId?: string | null;
+  tokenScopes: string[];
+}
+
+/** Identifies the calling human (OAuth bearer JWT or Better Auth session cookie), without needing an org. */
+export async function resolveUser(req: Request, auth: Auth, resource: string): Promise<ResolvedUser | null> {
+  const token = req.headers.get("x-api-key") ?? bearer(req);
+  if (token?.startsWith(API_KEY_PREFIX)) return null;
+  if (token) {
+    const claims = await verifyAccessToken(token, auth, resource);
+    if (!claims.sub) throw new AuthError(401, "token has no subject");
+    return { userId: claims.sub, tokenScopes: String(claims.scope ?? "").split(/\s+/).filter((s) => CRM_SCOPES.has(s)) };
+  }
+  const s = await auth.api.getSession({ headers: req.headers }).catch(() => null);
+  if (!s) return null;
+  return { userId: s.user.id, sessionId: s.session.id, activeOrgId: (s.session as { activeOrganizationId?: string | null }).activeOrganizationId, tokenScopes: [...SCOPES] };
+}
+
 /**
  * The single place that turns a request into an OrgContext.
- *  - `x-api-key: ocrm_...` or `Authorization: Bearer ocrm_...` -> org-owned Better Auth API key (actor = agent)
- *  - `Authorization: Bearer <jwt>` -> OAuth access token from the Better Auth MCP provider (actor = user);
- *    org = `x-org-id` header, else the user's only membership.
+ *  - `x-api-key: ocrm_...` / `Bearer ocrm_...` -> org-owned API key (actor = agent, role = key metadata.role, default member)
+ *  - `Bearer <jwt>` (OAuth) or Better Auth session cookie -> user (role = membership role);
+ *    org = `x-org-id` header, else the session's active org, else the user's only membership.
+ * Effective scopes = credential scopes ∩ role scopes (viewer => read only).
  */
 export async function resolveOrgContext(req: Request, auth: Auth, db: DB, resource: string): Promise<OrgContext> {
   const token = req.headers.get("x-api-key") ?? bearer(req);
-  if (!token) throw new AuthError(401, "missing credentials");
-
-  if (token.startsWith(API_KEY_PREFIX)) {
+  if (token?.startsWith(API_KEY_PREFIX)) {
     const res = await auth.api.verifyApiKey({ body: { key: token } });
     if (!res.valid || !res.key) throw new AuthError(401, "invalid api key");
+    const role = keyRole(res.key.metadata);
     return {
       orgId: res.key.referenceId,
       actor: { type: "agent", id: `apikey:${res.key.id}`, name: res.key.name ?? undefined },
-      scopes: scopesFromPermissions(res.key.permissions),
+      role,
+      scopes: intersect(scopesFromPermissions(res.key.permissions), scopesForRole(role)),
     };
   }
-
-  const claims = await verifyAccessToken(token, auth, resource);
-  const userId = claims.sub;
-  if (!userId) throw new AuthError(401, "token has no subject");
-  const tokenScopes = String(claims.scope ?? "").split(/\s+/).filter((s) => CRM_SCOPES.has(s));
-  const memberships = await db.select().from(member).where(eq(member.userId, userId));
-  const wanted = req.headers.get("x-org-id");
+  const u = await resolveUser(req, auth, resource);
+  if (!u) throw new AuthError(401, "missing credentials");
+  const memberships = await db.select().from(member).where(eq(member.userId, u.userId));
+  const wanted = req.headers.get("x-org-id") ?? u.activeOrgId ?? undefined;
   const m = wanted ? memberships.find((x) => x.organizationId === wanted) : memberships.length === 1 ? memberships[0] : undefined;
-  if (!m) throw new AuthError(403, wanted ? "not a member of that organization" : "user belongs to several orgs; send x-org-id");
-  return { orgId: m.organizationId, actor: { type: "user", id: userId }, scopes: tokenScopes };
+  if (!m) throw new AuthError(403, wanted ? "not a member of that organization" : memberships.length ? "user belongs to several orgs; send x-org-id or switch_org" : "not a member of any organization");
+  const role = parseRole(m.role);
+  return { orgId: m.organizationId, actor: { type: "user", id: u.userId }, userId: u.userId, sessionId: u.sessionId, role, scopes: intersect(u.tokenScopes, scopesForRole(role)) };
 }
 
 /** Verifies a Better Auth-issued JWT access token locally against the JWKS (no self-fetch). */

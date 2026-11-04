@@ -16,8 +16,10 @@ request ─► Hono (src/index.ts)
             ├─ /sign-in, /consent     tiny HTML pages for the OAuth hop
             └─ /mcp, /v1/*  ─► resolveOrgContext (src/middleware.ts)
                                  x-api-key / Bearer ocrm_…  → org API key  → {org_id, actor: agent, scopes}
-                                 Bearer <JWT>               → OAuth token  → {org_id, actor: user,  scopes}
+                                 Bearer <JWT> / session cookie → user   → {org_id, actor: user, role, scopes}
+                               ─► callTool (src/tools.ts)       one registry for REST + MCP, central role guard
                                ─► CrmService (src/service.ts)   zod-validated tools, idempotency, activity log
+                                  TeamService (src/team.ts)     members, invites, API keys, seats
                                ─► Repository (src/repository.ts) the ONLY data access; every query filtered by org_id
                                ─► D1
 ```
@@ -34,6 +36,27 @@ request ─► Hono (src/index.ts)
 * **Dedupe:** contacts by normalized email, then normalized LinkedIn URL; companies by normalized domain
   (work-email domains auto-create/link a company; free-mail domains don't). Touches by `(channel, external_id)`.
 
+* **Teams / roles** (`src/roles.ts`): `owner > admin > member > viewer` on top of Better Auth's organization
+  plugin (same access-control roles are configured there, so `/api/auth/organization/*` follows them too).
+  Effective scopes = credential scopes ∩ role scopes (viewer ⇒ `crm:read` only). Users get their membership role;
+  API keys carry `metadata.role` (default `member`; keys created before roles existed count as `member`).
+  | | viewer | member | admin | owner |
+  |---|---|---|---|---|
+  | read CRM, `get_org_usage`, `list_members` | ✓ | ✓ | ✓ | ✓ |
+  | CRM writes (contacts, touches, drafts, tasks, imports) | | ✓ | ✓ | ✓ |
+  | blocklist (`add/remove_competitor`), `upsert_campaign`, members, invites, API keys | | | ✓ | ✓ |
+  | `transfer_ownership`, `set_seat_limit`, `delete_org` | | | | ✓ |
+
+  Admins can't grant above their own role, touch owners, or grant owner. The last owner can't be removed or demoted.
+* **Seats:** seats = human members (API keys/bots never count). `organization.seat_limit` (null = unlimited) is
+  enforced on `accept_invite` and in Better Auth's `beforeAddMember` hook. `get_org_usage` reports seats, keys, contacts.
+* **Invitations:** `invite_member` returns `accept_url` = `/accept-invite?token=<invitation id>` and never emails.
+  Delivery goes through `setInviteSender()` (`src/invites.ts`; default logs the URL). The invitee signs in and
+  accepts on that page (→ `POST /invites/accept`, session or OAuth bearer) or calls `accept_invite` over MCP/REST.
+  The invitee's email must match. Invites expire after 7 days; re-inviting cancels the old one.
+* **Multiple orgs:** a user can belong to many orgs. Org = `x-org-id` header, else the session's active org, else the
+  only membership. `switch_org` persists the active org on cookie sessions; `list_my_orgs` shows all.
+
 ### Tools (MCP and `POST /v1/<tool>`)
 Every write tool accepts `idempotency_key` (MCP) or an `Idempotency-Key` header (REST). Reusing a key with
 different input returns `conflict`. The CRM **never sends anything**; it records what you sent.
@@ -46,6 +69,10 @@ different input returns `conflict`. The CRM **never sends anything**; it records
 | Drafts and campaigns | `create_draft`, `transition_draft`, `list_drafts`, `upsert_campaign`, `list_campaigns` |
 | Pacing and reporting | `x_pacing_today`, `outreach_report`, `pipeline_summary` |
 | CSV | `import_leads_csv` (dry run by default), `export_csv` |
+| Org and usage | `get_org_usage`, `list_my_orgs`, `switch_org`, `set_seat_limit` (owner), `delete_org` (owner, `confirm_slug`) |
+| Members | `list_members`, `update_member_role`, `remove_member`, `transfer_ownership` (owner) |
+| Invites | `invite_member`, `list_invites`, `revoke_invite`, `accept_invite` (user only) |
+| API keys | `create_api_key` (role, default member; secret shown once), `list_api_keys`, `revoke_api_key` |
 
 Also `GET /v1/me`.
 
@@ -82,8 +109,10 @@ curl -s localhost:5173/v1/pipeline_summary -X POST -H "x-api-key: ocrm_…" -d '
   then `/consent`, and receives a JWT scoped to `crm:read crm:write`. Multi-org users must send `x-org-id`.
 
 ### Sales Outbound setup (after deploy)
-1. Create the org and an API key once: `bun scripts/bootstrap.ts --url https://<crm-host> --email … --password … --org "Sales"`.
-   Keep the printed `ocrm_…` key in the agent's secret store.
+1. Create the org and an **admin** API key once: `bun scripts/bootstrap.ts --url https://<crm-host> --email … --password … --org "Sales"`
+   (`--role member` for a narrower key). Keep the printed `ocrm_…` key in the agent's secret store. An admin key is
+   needed for `add_competitor`/`remove_competitor`/`upsert_campaign`; keys created before roles existed act as `member`
+   — replace them with `create_api_key {role:"admin"}`.
 2. MCP config (Streamable HTTP):
    ```json
    { "mcpServers": { "crm": { "type": "http", "url": "https://<crm-host>/mcp",

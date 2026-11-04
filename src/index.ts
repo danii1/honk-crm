@@ -5,10 +5,11 @@ import { createAuth, type Auth } from "./auth";
 import { CrmError, type OrgContext } from "./context";
 import type { Env } from "./env";
 import { handleMcp } from "./mcp";
-import { AuthError, resolveOrgContext } from "./middleware";
-import { consentPage, homePage, signInPage } from "./pages";
+import { AuthError, resolveOrgContext, resolveUser } from "./middleware";
+import { acceptInvitePage, consentPage, homePage, signInPage } from "./pages";
 import { createDb, type DB } from "./repository";
-import { CrmService, TOOL_NAMES } from "./service";
+import { acceptInvite, switchOrg } from "./team";
+import { callTool, TOOL_INDEX } from "./tools";
 
 type Vars = { auth: Auth; db: DB; org: OrgContext };
 const app = new Hono<{ Bindings: Env; Variables: Vars }>();
@@ -67,19 +68,30 @@ const authed = createMiddleware<{ Bindings: Env; Variables: Vars }>(async (c, ne
 });
 
 app.use("/mcp", authed);
-app.all("/mcp", (c) => handleMcp(c.req.raw, c.env, c.executionCtx as ExecutionContext, c.get("db"), c.get("org")));
+const teamDeps = (c: { env: Env; get: (k: "auth") => Auth }) => ({ auth: c.get("auth"), d1: c.env.DB, baseUrl: c.env.BETTER_AUTH_URL });
+app.all("/mcp", (c) => handleMcp(c.req.raw, c.env, c.executionCtx as ExecutionContext, c.get("db"), c.get("org"), teamDeps(c)));
+
+// ---- Invitations: accept link + accept endpoint (needs a signed-in user, not an org yet).
+app.get("/accept-invite", (c) => c.html(acceptInvitePage(c.req.query("token") ?? "")));
+app.post("/invites/accept", async (c) => {
+  const u = await resolveUser(c.req.raw, c.get("auth"), mcpResource(c.env));
+  if (!u) return c.json({ error: "sign in first" }, 401);
+  const body = await c.req.json().catch(() => ({}));
+  const res = await acceptInvite(c.get("db"), c.env.DB, u.userId, body);
+  if (u.sessionId) await switchOrg(c.get("db"), u.userId, u.sessionId, { org_id: res.org_id });
+  return c.json(res);
+});
 
 // REST mirror of the MCP tools: POST /v1/<tool> with the same JSON input.
 app.use("/v1/*", authed);
 app.get("/v1/me", (c) => c.json(c.get("org")));
 app.post("/v1/:tool", async (c) => {
-  const tool = c.req.param("tool") as (typeof TOOL_NAMES)[number];
-  if (!TOOL_NAMES.includes(tool)) return c.json({ error: "unknown tool" }, 404);
+  const tool = c.req.param("tool");
+  if (!TOOL_INDEX.has(tool)) return c.json({ error: "unknown tool" }, 404);
   const body = await c.req.json().catch(() => ({}));
   const idemHeader = c.req.header("idempotency-key");
   if (idemHeader && body && typeof body === "object" && !("idempotency_key" in body)) (body as Record<string, unknown>).idempotency_key = idemHeader;
-  const svc = new CrmService(c.get("db"), c.get("org"));
-  return c.json(await (svc[tool] as (a: unknown) => Promise<unknown>).call(svc, body));
+  return c.json(await callTool(tool, body, c.get("db"), c.get("org"), teamDeps(c)));
 });
 
 export default app;

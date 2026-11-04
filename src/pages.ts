@@ -40,3 +40,20 @@ const send = async (accept) => {
 y.onclick = () => send(true); n.onclick = () => send(false);
 </script>`,
   );
+
+export const acceptInvitePage = (token: string) =>
+  shell(
+    "Accept invite",
+    `<h1>Join organization</h1><p>Sign in with the invited email, then accept.</p><form id="f"><input name="email" type="email" placeholder="email" required><input name="password" type="password" placeholder="password" required><button>Sign in &amp; accept</button></form><pre id="e"></pre>
+<script>
+const token = ${JSON.stringify(token).replace(/</g, "\\u003c")};
+f.onsubmit = async (ev) => {
+  ev.preventDefault();
+  const d = Object.fromEntries(new FormData(f));
+  const s = await fetch("/api/auth/sign-in/email", { method: "POST", headers: { "content-type": "application/json" }, credentials: "include", body: JSON.stringify(d) });
+  if (!s.ok) { e.textContent = JSON.stringify(await s.json().catch(() => ({}))); return; }
+  const r = await fetch("/invites/accept", { method: "POST", headers: { "content-type": "application/json" }, credentials: "include", body: JSON.stringify({ token }) });
+  e.textContent = JSON.stringify(await r.json().catch(() => ({})), null, 2);
+};
+</script>`,
+  );

@@ -2,23 +2,25 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { createMcpHandler } from "agents/mcp/server";
 import { CrmError, type OrgContext } from "./context";
 import type { DB } from "./repository";
-import { CrmService, schemas, TOOL_DESCRIPTIONS, TOOL_NAMES, WRITE_TOOLS } from "./service";
+import type { TeamDeps, teamSchemas } from "./team";
+
+type AnySchema = (typeof teamSchemas)["accept_invite"];
+import { callTool, TOOLS } from "./tools";
 
 /** One fresh MCP server per request, bound to that request's org context. */
-export function createCrmMcpServer(db: DB, ctx: OrgContext) {
-  const svc = new CrmService(db, ctx);
-  const server = new McpServer({ name: "outreach-crm", version: "0.1.0" });
-  for (const name of TOOL_NAMES) {
+export function createCrmMcpServer(db: DB, ctx: OrgContext, deps: TeamDeps) {
+  const server = new McpServer({ name: "outreach-crm", version: "0.2.0" });
+  for (const t of TOOLS) {
     server.registerTool(
-      name,
+      t.name,
       {
-        description: TOOL_DESCRIPTIONS[name],
-        inputSchema: schemas[name],
-        annotations: { readOnlyHint: !WRITE_TOOLS.has(name), idempotentHint: true },
+        description: t.description,
+        inputSchema: t.schema as AnySchema,
+        annotations: { readOnlyHint: !t.write, idempotentHint: true, destructiveHint: t.name === "delete_org" || undefined },
       },
       async (args: unknown) => {
         try {
-          const result = await (svc[name] as (a: unknown) => Promise<unknown>).call(svc, args);
+          const result = await callTool(t.name, args, db, ctx, deps);
           return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
         } catch (e) {
           const msg = e instanceof CrmError ? `${e.code}: ${e.message}` : (e as Error).message;
@@ -30,6 +32,6 @@ export function createCrmMcpServer(db: DB, ctx: OrgContext) {
   return server;
 }
 
-export function handleMcp(req: Request, env: unknown, exec: ExecutionContext, db: DB, ctx: OrgContext) {
-  return createMcpHandler(() => createCrmMcpServer(db, ctx), { route: "/mcp" })(req, env, exec);
+export function handleMcp(req: Request, env: unknown, exec: ExecutionContext, db: DB, ctx: OrgContext, deps: TeamDeps) {
+  return createMcpHandler(() => createCrmMcpServer(db, ctx, deps), { route: "/mcp" })(req, env, exec);
 }

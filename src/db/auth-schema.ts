@@ -101,6 +101,8 @@ export const organization = sqliteTable("organization", {
   logo: text("logo"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   metadata: text("metadata"),
+  /** Max human members (seats); null = unlimited. API keys never count. */
+  seatLimit: integer("seat_limit"),
 });
 
 export const member = sqliteTable(

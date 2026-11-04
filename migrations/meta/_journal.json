@@ -22,6 +22,13 @@
       "when": 1793775453928,
       "tag": "0002_sales_outbound",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1793777516324,
+      "tag": "0003_teams",
+      "breakpoints": true
     }
   ]
 }
