@@ -1,0 +1,39 @@
+{
+  "name": "outreach-crm",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint src test",
+    "test": "vitest run",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "deploy": "vite build && wrangler deploy"
+  },
+  "dependencies": {
+    "@better-auth/api-key": "^1.7.16",
+    "@better-auth/mcp": "^1.7.16",
+    "@better-auth/oauth-provider": "1.7.16",
+    "@modelcontextprotocol/server": "2.4.0",
+    "agents": "^0.33.0",
+    "better-auth": "^1.7.16",
+    "drizzle-orm": "^0.45.4",
+    "hono": "^4.13.16",
+    "jose": "^6.2.15",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.67.0",
+    "@cloudflare/vitest-plugin": "^1.5.1",
+    "@cloudflare/workers-types": "^5.20261104.1",
+    "@types/node": "^26.6.6",
+    "drizzle-kit": "^0.31.11",
+    "oxlint": "^1.91.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5",
+    "vitest": "^5.1.0",
+    "wrangler": "^4.157.0"
+  }
+}
