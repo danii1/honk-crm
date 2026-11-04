@@ -49,5 +49,8 @@ describe("post-import fixes", () => {
     const jo = (await svc.upsert_contact({ x_handle: "jo" })).contact;
     const r = await svc.upsert_contact({ contact_id: jo.id, clear: ["x_handle"], linkedin_url: "li-jo", idempotency_key: "repair-jo-1" });
     expect(r.contact).toMatchObject({ xHandle: null, linkedin: "linkedin.com/in/li-jo" });
+    const vaon = (await svc.upsert_contact({ name: "VAON2", x_handle: "vaon2" })).contact;
+    const r2 = await svc.upsert_contact({ contact_id: vaon.id, clear: ["x_handle"], website: "https://vaon.com.vn", profile_url: "https://vaon.com.vn", idempotency_key: "repair-vaon-1" });
+    expect(r2.contact).toMatchObject({ xHandle: null, website: "https://vaon.com.vn", name: "VAON2" });
   });
 });

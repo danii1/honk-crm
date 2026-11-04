@@ -397,7 +397,7 @@ export class CrmService {
         const key = ({ linkedin_url: "linkedin", x_handle: "xHandle", reddit_user: "redditUser", github: "github" } as const)[k];
         if (v && !ids[key]) throw new CrmError("invalid", `could not parse ${k} from ${JSON.stringify(v)}`);
       }
-      if (!Object.values(ids).some(Boolean) && !i.name) throw new CrmError("invalid", "need at least one identity (email, x_handle, linkedin_url, reddit_user, github) or a name");
+      if (!Object.values(ids).some(Boolean) && !i.name && !i.contact_id) throw new CrmError("invalid", "need at least one identity (email, x_handle, linkedin_url, reddit_user, github) or a name");
 
       // Dedupe across every identity. Two different contacts matching = conflict the caller must resolve.
       const found = await this.repo.contactsByIdentity(ids);
