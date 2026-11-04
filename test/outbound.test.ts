@@ -199,8 +199,8 @@ describe("CSV import", () => {
     expect(mapStatus("weird")).toMatchObject({ stage: "new", known: false });
     const w: string[] = [];
     const p = parseImportRow({ handle: "@JaneD", name: "Jane", followers: "12.5k", score: "9", source: "twitter", status: "replied", notes: "jane@corp.io", company: "Corp" }, w);
-    expect(p).toMatchObject({ source: "x", channel: "x", followers: 12500, score: null, companyDomain: "corp.io", ids: { xHandle: "janed", email: "jane@corp.io" }, mapped: { stage: "responded" } });
-    expect(w.join()).toMatch(/score/);
+    expect(p).toMatchObject({ source: "x", channel: "x", followers: 12500, score: 5, scoreOriginal: "9", companyDomain: "corp.io", ids: { xHandle: "janed", email: "jane@corp.io" }, mapped: { stage: "responded" } });
+    expect(w.join()).not.toMatch(/score/);
   });
 
   it("dry-run reports, real run writes, re-run is a no-op", async () => {

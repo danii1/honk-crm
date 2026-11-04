@@ -1,5 +1,5 @@
 import type { BLOCK_KINDS, DraftState, Stage } from "./db/schema";
-import { normalizeDomain, normalizeGithub, normalizeLinkedin, normalizeName, normalizeRedditUser, normalizeXHandle } from "./normalize";
+import { isRedditRef, normalizeDomain, normalizeGithub, normalizeLinkedin, normalizeName, normalizeRedditUser, normalizeXHandle } from "./normalize";
 
 /** Progress order. lost / do_not_contact are terminal and ranked separately. */
 const ORDER: Stage[] = ["new", "qualified", "drafted", "contacted", "connection_pending", "connected", "responded", "call_booked", "pilot", "paying"];
@@ -34,13 +34,14 @@ export const DRAFT_TRANSITIONS: Record<DraftState, DraftState[]> = {
 export type BlockKind = (typeof BLOCK_KINDS)[number];
 
 export function normalizeHandle(v: string): string {
+  if (isRedditRef(v)) return normalizeRedditUser(v.replace(/^@/, "")) ?? v.trim().toLowerCase();
   return normalizeXHandle(v) ?? normalizeGithub(v) ?? normalizeRedditUser(v) ?? (normalizeLinkedin(v)?.split("/").pop() || v.trim().replace(/^@/, "").toLowerCase());
 }
 
 export function normalizeBlockValue(kind: BlockKind | undefined, raw: string): { kind: BlockKind; value: string } | null {
   const v = raw.trim();
   if (!v) return null;
-  const k: BlockKind = kind ?? (v.startsWith("@") || /^(https?:\/\/)?(www\.)?(x|twitter|github|reddit|linkedin)\.com\//i.test(v) ? "handle" : /^[^\s@]+\.[a-z]{2,}(\/.*)?$/i.test(v.replace(/^https?:\/\//, "")) ? "domain" : "name");
+  const k: BlockKind = kind ?? (v.startsWith("@") || isRedditRef(v) || /^(https?:\/\/)?(www\.)?(x|twitter|github|reddit|linkedin)\.com\//i.test(v) ? "handle" : /^[^\s@]+\.[a-z]{2,}(\/.*)?$/i.test(v.replace(/^https?:\/\//, "")) ? "domain" : "name");
   const value = k === "domain" ? normalizeDomain(v) : k === "handle" ? normalizeHandle(v) : normalizeName(v);
   return value ? { kind: k, value } : null;
 }
@@ -56,6 +57,13 @@ export interface BlockEntry {
   kind: BlockKind;
   value: string;
   label: string | null;
+  match?: MatchMode | null;
+}
+export type MatchMode = "exact" | "fuzzy";
+
+/** Single short words (<=7 chars) (Station, Coral, Axis...) are too generic to match fuzzily. */
+export function defaultMatchMode(kind: BlockKind, value: string, raw: string = value): MatchMode {
+  return kind === "name" && /^[a-z0-9]{1,7}$/.test(value) && /^[A-Za-z0-9]{1,7}$/.test(raw.trim()) ? "exact" : "fuzzy";
 }
 
 /** Person names must match exactly; company names match on whole words; domains match incl. subdomains. */
@@ -69,6 +77,7 @@ export function matchBlocklist(entries: BlockEntry[], p: Probe) {
     let on: string | undefined;
     if (e.kind === "domain") on = domains.find((d) => d === e.value || d.endsWith(`.${e.value}`));
     else if (e.kind === "handle") on = handles.find((h) => h === e.value);
+    else if ((e.match ?? defaultMatchMode(e.kind, e.value)) === "exact") on = companies.find((c) => c === e.value);
     else on = persons.find((n) => n === e.value) ?? companies.find((c) => c === e.value || ` ${c} `.includes(` ${e.value} `));
     if (on) hits.push({ entry: e, matched_on: `${e.kind}:${on}` });
   }

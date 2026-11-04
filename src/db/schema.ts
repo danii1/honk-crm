@@ -25,7 +25,8 @@ export const STAGES = [
 /** Channels with per-contact state. */
 export const OUTREACH_CHANNELS = ["x", "linkedin", "reddit", "email"] as const;
 export const CHANNELS = ["email", "linkedin", "x", "reddit", "other"] as const;
-export const SOURCES = ["x", "linkedin", "reddit", "web", "prowlo"] as const;
+export const SOURCES = ["x", "linkedin", "reddit", "web", "prowlo", "email"] as const;
+export const MATCH_MODES = ["exact", "fuzzy"] as const;
 export const CONTACT_TYPES = ["lead", "competitor"] as const;
 export const DRAFT_STATES = ["drafted", "approved", "sent", "discarded"] as const;
 export const BLOCK_KINDS = ["name", "handle", "domain"] as const;
@@ -99,10 +100,13 @@ export const contacts = sqliteTable(
     campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
     contactType: text("contact_type", { enum: CONTACT_TYPES }).notNull().default("lead"),
     source: text("source", { enum: SOURCES }),
+    sourceDetail: text("source_detail"), // raw source value from imports
     bioSummary: text("bio_summary"),
     followers: integer("followers"),
     estTeamSize: integer("est_team_size"),
+    estTeamSizeText: text("est_team_size_text"), // raw text when not a plain number
     score: integer("score"),
+    scoreOriginal: text("score_original"), // pre-rescale value (e.g. 1-10 scale)
     firstSeenAt: integer("first_seen_at", { mode: "timestamp_ms" }),
     notesText: text("notes"),
     signalPostUrl: text("signal_post_url"),
@@ -272,6 +276,7 @@ export const blocklist = sqliteTable(
     kind: text("kind", { enum: BLOCK_KINDS }).notNull(),
     value: text("value").notNull(),
     label: text("label"),
+    match: text("match", { enum: MATCH_MODES }).notNull().default("fuzzy"),
     createdAt: createdAt(),
   },
   (t) => [uniqueIndex("blocklist_org_kind_value_uq").on(t.orgId, t.kind, t.value)],

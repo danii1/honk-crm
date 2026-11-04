@@ -3,9 +3,9 @@ import { BLOCK_KINDS, CHANNELS, CONTACT_TYPES, DIRECTIONS, DRAFT_STATES, OUTREAC
 import { CrmError, requireRole, requireScope, type OrgContext } from "./context";
 import {
   companyDomainFromEmail, endOfLocalDay, localDateString, normalizeDomain, normalizeEmail, normalizeGithub, normalizeLinkedin,
-  normalizeName, normalizeRedditUser, normalizeUrl, normalizeXHandle, sha256, similarNames, startOfLocalDay,
+  isRedditRef, normalizeName, normalizeRedditUser, normalizeUrl, normalizeXHandle, sha256, similarNames, startOfLocalDay,
 } from "./normalize";
-import { advance, DRAFT_TRANSITIONS, matchBlocklist, normalizeBlockValue, normalizeHandle, rank, rollup, type Probe } from "./rules";
+import { advance, defaultMatchMode, DRAFT_TRANSITIONS, matchBlocklist, normalizeBlockValue, normalizeHandle, rank, rollup, type Probe } from "./rules";
 import { extractIdentities, mapStatus, parseCsvObjects, toCsv } from "./csv";
 import { Repository, type DB } from "./repository";
 
@@ -138,11 +138,20 @@ export const schemas = {
     value: z.string().min(1).describe("Company name, handle/profile URL, or domain"),
     kind: z.enum(BLOCK_KINDS).optional().describe("Inferred when omitted"),
     label: z.string().optional().describe("e.g. the competitor's product name"),
+    match: z.enum(["exact", "fuzzy"]).optional().describe("Name entries: exact = only the exact full company name; fuzzy = whole-word match inside company names and exact person names. Default exact for single words of <=7 chars, else fuzzy"),
     idempotency_key: idem,
     reason: reasonField,
   }),
   remove_competitor: z.object({ id: z.string(), idempotency_key: idem, reason: reasonField }),
   list_competitors: z.object({}),
+  purge_competitors: z.object({
+    ids: z.array(z.string()).optional().describe("Entry ids to delete"),
+    value_regex: z.string().optional().describe("Case-insensitive regex matched against the normalized value (e.g. ^u [a-z0-9_-]+$)"),
+    kind: z.enum(BLOCK_KINDS).optional(),
+    dry_run: z.boolean().default(true).describe("Default true: only list what would be deleted"),
+    idempotency_key: idem,
+    reason: reasonField,
+  }),
   set_channel_state: z.object({
     contact_id: z.string(),
     channel: z.enum(OUTREACH_CHANNELS),
@@ -684,7 +693,7 @@ export class CrmService {
     return this.idempotent("add_competitor", i, async () => {
       const n = normalizeBlockValue(i.kind, i.value);
       if (!n) throw new CrmError("invalid", `could not normalize ${JSON.stringify(i.value)}`);
-      const entry = await this.repo.insertBlock(n.kind, n.value, i.label ?? i.value);
+      const entry = await this.repo.insertBlock(n.kind, n.value, i.label ?? i.value, i.match ?? defaultMatchMode(n.kind, n.value, i.value));
       await this.repo.appendActivity({ action: "blocklist.added", entityType: "blocklist", entityId: entry.id, reason: i.reason, payload: n });
       return entry;
     });
@@ -698,6 +707,29 @@ export class CrmService {
       if (!gone) throw new CrmError("not_found", `blocklist entry ${i.id} not found`);
       await this.repo.appendActivity({ action: "blocklist.removed", entityType: "blocklist", entityId: i.id, reason: i.reason, payload: { kind: gone.kind, value: gone.value } });
       return { removed: gone };
+    });
+  }
+
+  async purge_competitors(raw: Input<"purge_competitors">) {
+    const i = schemas.purge_competitors.parse(raw);
+    requireRole(this.ctx, "admin");
+    if (!i.ids?.length && !i.value_regex) throw new CrmError("invalid", "give ids or value_regex");
+    let re: RegExp | null = null;
+    try {
+      re = i.value_regex ? new RegExp(i.value_regex, "i") : null;
+    } catch {
+      throw new CrmError("invalid", "value_regex is not a valid regex");
+    }
+    const ids = new Set(i.ids ?? []);
+    const all = await this.repo.blocklistAll();
+    const matched = all.filter((e) => (!i.kind || e.kind === i.kind) && (!ids.size || ids.has(e.id)) && (!re || re.test(e.value)));
+    if (i.dry_run) return { dry_run: true, count: matched.length, entries: matched };
+    return this.idempotent("purge_competitors", i, async () => {
+      for (const e of matched) {
+        await this.repo.deleteBlock(e.id);
+        await this.repo.appendActivity({ action: "blocklist.removed", entityType: "blocklist", entityId: e.id, reason: i.reason, payload: { kind: e.kind, value: e.value, purge: true } });
+      }
+      return { dry_run: false, count: matched.length, removed: matched };
     });
   }
 
@@ -989,12 +1021,14 @@ export class CrmService {
     const stateMap = new Map(states.map((s) => [stateKey(s.contactId, s.channel), s]));
 
     const seenThisRun = new Set<string>();
-    const report = { dry_run: !write, total_rows: records.length, created: 0, updated: 0, unchanged: 0, skipped: 0, missing_columns: missing, unknown_statuses: {} as Record<string, number>, rows: [] as ImportRowReport[] };
+    let scoresRescaled = 0;
+    const report = { dry_run: !write, total_rows: records.length, created: 0, updated: 0, unchanged: 0, skipped: 0, missing_columns: missing, unknown_statuses: {} as Record<string, number>, notices: [] as string[], rows: [] as ImportRowReport[] };
 
     for (const [n, r] of records.entries()) {
       const rowNo = i.row_offset + n + 2; // 1-based, header is row 1
       const warnings: string[] = [];
       const p = parseImportRow(r, warnings);
+      if (p.scoreOriginal !== null) scoresRescaled++;
       if (!p.mapped.known) report.unknown_statuses[r.status ?? ""] = (report.unknown_statuses[r.status ?? ""] ?? 0) + 1;
       const label = p.name ?? p.ids.xHandle ?? p.ids.linkedin ?? p.ids.email ?? `row ${rowNo}`;
       const skip = (why: string) => (report.skipped++, report.rows.push({ row: rowNo, action: "skipped", label, reason: why, warnings }));
@@ -1013,7 +1047,8 @@ export class CrmService {
       let existing = hits[0];
       if (!existing && p.name) {
         const coName = normalizeName(p.company);
-        existing = contacts.find((c) => normalizeName(c.name) === normalizeName(p.name) && normalizeName(c.companyId ? companyById.get(c.companyId)?.name : "") === coName);
+        const conflicts = (c: C) => (["email", "linkedin", "xHandle", "redditUser", "github"] as const).some((k) => !!p.ids[k] && !!c[k] && c[k] !== p.ids[k]) || (!!p.ids.redditUser && !c.redditUser && !!c.xHandle && !p.ids.xHandle);
+        existing = contacts.find((c) => normalizeName(c.name) === normalizeName(p.name) && normalizeName(c.companyId ? companyById.get(c.companyId)?.name : "") === coName && !conflicts(c));
         if (existing) warnings.push("matched existing contact by name+company");
       }
 
@@ -1057,8 +1092,11 @@ export class CrmService {
         bioSummary: p.bio,
         followers: p.followers,
         estTeamSize: p.estTeamSize,
+        estTeamSizeText: p.estTeamSizeText,
         score: p.score,
+        scoreOriginal: p.scoreOriginal,
         source: p.source,
+        sourceDetail: p.sourceDetail,
         firstSeenAt: p.firstSeen,
         signalPostUrl: p.signalUrl,
         signalDate: p.signalDate,
@@ -1122,6 +1160,7 @@ export class CrmService {
       else if (!write && !existing) seenThisRun.add(`(row ${rowNo})`);
       report.rows.push({ row: rowNo, action, label, contact_id: contactId, changes: action === "unchanged" ? undefined : changes, company: companyAction, warnings });
     }
+    if (scoresRescaled) report.notices.push(`${scoresRescaled} score(s) above 5 treated as a 1-10 scale and rescaled to 1-5 (round(score/2)); originals kept in score_original`);
     return report;
   }
 
@@ -1174,6 +1213,29 @@ function localNoon(day: string, tz: string) {
   return local === day ? guess : new Date(guess.getTime() + (local < day ? 1 : -1) * 12 * 3_600_000);
 }
 
+/** Free-form source -> canonical source. Unknown values are returned lowercased (caller infers). */
+export function mapSource(raw?: string): string | undefined {
+  const k = raw?.trim().toLowerCase();
+  if (!k) return undefined;
+  if (k.startsWith("reddit") || k.startsWith("prowlo") || k.includes("reddit")) return "reddit";
+  if (k.startsWith("email") || k.startsWith("e-mail") || k === "mail") return "email";
+  if (k.startsWith("linkedin")) return "linkedin";
+  if (k === "x" || k.startsWith("x_") || k.startsWith("x-") || k.startsWith("twitter")) return "x";
+  if (k.startsWith("handoff_") || k.startsWith("web")) return "web";
+  return k;
+}
+
+/** "12" -> 12, "5-10" -> 8 (midpoint), "~50" -> 50; anything else kept as text only. Never warns. */
+export function parseTeamSize(raw?: string): { estTeamSize: number | null; estTeamSizeText: string | null } {
+  if (!raw) return { estTeamSize: null, estTeamSizeText: null };
+  const t = raw.replace(/,/g, "").trim();
+  const range = t.match(/^~?(\d+)\s*(?:-|–|to)\s*(\d+)\s*(?:people|ppl|employees)?$/i);
+  if (range) return { estTeamSize: Math.round((Number(range[1]) + Number(range[2])) / 2), estTeamSizeText: raw };
+  const n = t.match(/^~?(\d+)\+?\s*(?:people|ppl|employees)?$/i);
+  if (n) return { estTeamSize: Number(n[1]), estTeamSizeText: null };
+  return { estTeamSize: null, estTeamSizeText: raw };
+}
+
 const num = (v: string | undefined, warnings: string[], field: string) => {
   if (!v) return null;
   const m = v.replace(/,/g, "").trim().match(/^~?(\d+(?:\.\d+)?)\s*([kKmM])?/);
@@ -1186,8 +1248,8 @@ const num = (v: string | undefined, warnings: string[], field: string) => {
 export function parseImportRow(r: Record<string, string>, warnings: string[] = []) {
   const v = (k: string) => (r[k] ?? "").trim() || undefined;
   const ids = { email: null as string | null, linkedin: null as string | null, xHandle: null as string | null, redditUser: null as string | null, github: null as string | null };
-  let src = v("source")?.toLowerCase();
-  if (src === "twitter") src = "x";
+  const srcRaw = v("source");
+  let src = mapSource(srcRaw);
   const profile = v("profile_url");
   const host = profile?.replace(/^https?:\/\//i, "").replace(/^www\./i, "").toLowerCase() ?? "";
   if (/^(x|twitter)\.com\//.test(host)) ids.xHandle = normalizeXHandle(profile);
@@ -1196,7 +1258,8 @@ export function parseImportRow(r: Record<string, string>, warnings: string[] = [
   else if (/github\.com\//.test(host)) ids.github = normalizeGithub(profile);
   const handle = v("handle");
   if (handle) {
-    if (/^https?:|\.com\//i.test(handle)) {
+    if (isRedditRef(handle)) ids.redditUser ??= normalizeRedditUser(handle.replace(/^@/, ""));
+    else if (/^https?:|\.com\//i.test(handle)) {
       const e = extractIdentities(handle);
       ids.xHandle ??= e.x[0] ?? null;
       ids.linkedin ??= e.linkedin[0] ?? null;
@@ -1222,7 +1285,7 @@ export function parseImportRow(r: Record<string, string>, warnings: string[] = [
   take("redditUser", ex.reddit, "reddit");
   take("xHandle", ex.x, "x");
   if (!src || !(SOURCES as readonly string[]).includes(src)) {
-    const inferred = ids.xHandle ? "x" : ids.linkedin ? "linkedin" : ids.redditUser ? "reddit" : "web";
+    const inferred = ids.xHandle ? "x" : ids.linkedin ? "linkedin" : ids.redditUser ? "reddit" : ids.email ? "email" : "web";
     if (src) warnings.push(`unknown source ${src}; using ${inferred}`);
     src = inferred;
   }
@@ -1231,6 +1294,11 @@ export function parseImportRow(r: Record<string, string>, warnings: string[] = [
   const mapped = mapStatus(v("status"));
   if (!mapped.known) warnings.push(`unknown status ${v("status")}; using new`);
   let score = num(v("score"), warnings, "score");
+  let scoreOriginal: string | null = null;
+  if (score !== null && score > 5 && score <= 10) {
+    scoreOriginal = v("score")!;
+    score = Math.max(1, Math.round(score / 2));
+  }
   if (score !== null && (score < 1 || score > 5)) {
     warnings.push(`score ${score} out of 1-5; ignored`);
     score = null;
@@ -1246,7 +1314,9 @@ export function parseImportRow(r: Record<string, string>, warnings: string[] = [
     role: v("role") ?? null,
     bio: v("bio_summary") ?? null,
     followers: num(v("followers"), warnings, "followers"),
-    estTeamSize: num(v("est_team_size"), warnings, "est_team_size"),
+    ...parseTeamSize(v("est_team_size")),
+    scoreOriginal,
+    sourceDetail: srcRaw && srcRaw.toLowerCase() !== source ? srcRaw : null,
     score,
     source,
     channel,
@@ -1279,6 +1349,7 @@ export const TOOL_DESCRIPTIONS: Record<keyof typeof schemas, string> = {
   is_competitor: "Check a name/company/handle/domain/email (or an existing contact) against the competitor blocklist.",
   add_competitor: "Add a competitor to the blocklist (company name, handle/profile URL, or domain; kind inferred if omitted).",
   remove_competitor: "Remove a blocklist entry by id.",
+  purge_competitors: "Bulk-delete blocklist entries by ids and/or a case-insensitive value_regex (optionally filtered by kind). dry_run defaults to true and lists matches; set dry_run=false to delete. Admin only.",
   list_competitors: "List the competitor blocklist.",
   set_channel_state: "Set a contact's state on one channel (x, linkedin, reddit, email): stage (exact), last_touch_at, next_followup_at (the reminder; null clears), next_step. Re-rolls the overall stage forward.",
   create_draft: "Save a message draft (state drafted) for a contact+channel, optionally with an intent_url and campaign. Rejected for competitors and do_not_contact. The CRM never sends.",
@@ -1296,9 +1367,9 @@ export const TOOL_DESCRIPTIONS: Record<keyof typeof schemas, string> = {
   export_csv: "Export contacts as CSV (import columns first, then ids, identities and per-channel stage/follow-up).",
 };
 /** Tools that need admin (or owner) on top of crm:write. */
-export const ADMIN_CRM_TOOLS = new Set<string>(["add_competitor", "remove_competitor", "upsert_campaign"]);
+export const ADMIN_CRM_TOOLS = new Set<string>(["add_competitor", "remove_competitor", "purge_competitors", "upsert_campaign"]);
 export const TOOL_NAMES = Object.keys(schemas) as (keyof typeof schemas)[];
 export const WRITE_TOOLS = new Set<keyof typeof schemas>([
   "upsert_contact", "upsert_company", "log_touch", "update_stage", "create_task", "complete_task", "add_note",
-  "add_competitor", "remove_competitor", "set_channel_state", "create_draft", "transition_draft", "upsert_campaign", "import_leads_csv",
+  "add_competitor", "remove_competitor", "purge_competitors", "set_channel_state", "create_draft", "transition_draft", "upsert_campaign", "import_leads_csv",
 ]);

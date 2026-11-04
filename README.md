@@ -44,7 +44,7 @@ request ─► Hono (src/index.ts)
   |---|---|---|---|---|
   | read CRM, `get_org_usage`, `list_members` | ✓ | ✓ | ✓ | ✓ |
   | CRM writes (contacts, touches, drafts, tasks, imports) | | ✓ | ✓ | ✓ |
-  | blocklist (`add/remove_competitor`), `upsert_campaign`, members, invites, API keys | | | ✓ | ✓ |
+  | blocklist (`add/remove/purge_competitor(s)`), `upsert_campaign`, members, invites, API keys | | | ✓ | ✓ |
   | `transfer_ownership`, `set_seat_limit`, `delete_org` | | | | ✓ |
 
   Admins can't grant above their own role, touch owners, or grant owner. The last owner can't be removed or demoted.
@@ -65,7 +65,7 @@ different input returns `conflict`. The CRM **never sends anything**; it records
 |---|---|
 | Contacts and companies | `search_contacts`, `get_contact`, `upsert_contact`, `upsert_company`, `find_existing`, `list_contacts`, `add_note`, `get_activity` |
 | Channel state and reminders | `set_channel_state`, `log_touch`, `update_stage`, `due_followups`, `stale_no_response`, `linkedin_needs_first_message`, `list_due_followups`, `create_task`, `complete_task` |
-| Competitors | `is_competitor`, `add_competitor`, `remove_competitor`, `list_competitors` |
+| Competitors | `is_competitor`, `add_competitor` (`match: exact\|fuzzy`), `remove_competitor`, `purge_competitors` (ids / `value_regex`, `dry_run` defaults to true), `list_competitors` |
 | Drafts and campaigns | `create_draft`, `transition_draft`, `list_drafts`, `upsert_campaign`, `list_campaigns` |
 | Pacing and reporting | `x_pacing_today`, `outreach_report`, `pipeline_summary` |
 | CSV | `import_leads_csv` (dry run by default), `export_csv` |
@@ -86,6 +86,31 @@ forward only; `do_not_contact` is sticky. The overall stage is the furthest chan
 follow-up. **Reminders** are the per-channel `next_followup_at`, read through `due_followups` (tz defaults to Asia/Saigon).
 **X pacing:** at least 60 minutes between sends and at most 8 per local day (`x_pacing_today`). **Goal:** 3 paying or 10 pilots by 2026-12-15 (`outreach_report`).
 Migration 0002 maps v1 stages: replied→responded, meeting→call_booked, won→paying.
+
+### Competitor matching
+Name entries carry `match`: `exact` matches only the exact full (normalized) company name; `fuzzy` also
+matches the name as whole words inside a company name and exact person names. Single words of up to 7
+characters (Station, Coral, Axis, Spawn...) default to `exact`; pass `match` to override. Handles and
+domains always match exactly (domains include subdomains). `u/name`, `/u/name` and `reddit.com/user/name`
+are Reddit handles, never names or X handles.
+
+### CSV import normalization
+- `source` is mapped case-insensitively: `reddit*`/`prowlo*`/`*reddit*` -> reddit, `email*` -> email,
+  `linkedin*` -> linkedin, `x_*`/`twitter*` -> x, `handoff_*`/`web*` -> web. The raw value is kept in `source_detail`.
+- `est_team_size`: numbers as-is, ranges like `5-10` -> midpoint (8); anything else is stored in `est_team_size_text` without warnings.
+- `score` above 5 (up to 10) is treated as a 1-10 scale: `max(1, round(score/2))`; the original goes to `score_original`
+  and the report has one summary line in `notices`.
+- `status: warm` -> responded.
+
+### Calling the REST API: send a custom User-Agent
+Callers should always send a descriptive `User-Agent` (e.g. `sales-outbound/1.0`). Generic library agents such as
+`python-requests/*` can be challenged or blocked with a 403 at Cloudflare's edge (Bot Fight Mode / browser-integrity
+heuristics, which also weigh the caller's IP reputation) before the request reaches the Worker. Edge blocks return a
+Cloudflare HTML page; the CRM's own 401/403 errors are always JSON. Account-wide security settings are deliberately unchanged.
+
+```python
+requests.post(f"{BASE}/v1/list_competitors", json={}, headers={"Authorization": f"Bearer {KEY}", "User-Agent": "sales-outbound/1.0"})
+```
 
 ## Local dev
 ```bash

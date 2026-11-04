@@ -394,8 +394,8 @@ export class Repository {
   async blocklistAll() {
     return this.db.select().from(s.blocklist).where(eq(s.blocklist.orgId, this.orgId)).orderBy(asc(s.blocklist.kind), asc(s.blocklist.value));
   }
-  async insertBlock(kind: (typeof s.BLOCK_KINDS)[number], value: string, label?: string | null) {
-    await this.db.insert(s.blocklist).values({ orgId: this.orgId, kind, value, label }).onConflictDoNothing();
+  async insertBlock(kind: (typeof s.BLOCK_KINDS)[number], value: string, label?: string | null, match: (typeof s.MATCH_MODES)[number] = "fuzzy") {
+    await this.db.insert(s.blocklist).values({ orgId: this.orgId, kind, value, label, match }).onConflictDoNothing();
     return (await this.db.query.blocklist.findFirst({
       where: and(eq(s.blocklist.orgId, this.orgId), eq(s.blocklist.kind, kind), eq(s.blocklist.value, value)),
     }))!;

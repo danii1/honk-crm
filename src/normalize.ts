@@ -48,6 +48,9 @@ export function normalizeXHandle(input?: string | null): string | null {
   return /^[A-Za-z0-9_]{1,15}$/.test(h) && !["home", "i", "intent", "search", "share"].includes(h.toLowerCase()) ? h.toLowerCase() : null;
 }
 
+/** True for u/name, /u/name or reddit.com/user/name style values. */
+export const isRedditRef = (v?: string | null) => !!v && /^(@?\/?u\/|(https?:\/\/)?([a-z]+\.)?reddit\.com\/(u|user)\/)/i.test(v.trim());
+
 export function normalizeRedditUser(input?: string | null): string | null {
   if (!input?.trim()) return null;
   const b = bare(input);

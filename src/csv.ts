@@ -57,7 +57,7 @@ const STATUS_MAP: Record<string, Stage> = {
   contacted: "contacted", sent: "contacted", dm_sent: "contacted", dmed: "contacted", messaged: "contacted", emailed: "contacted", replied_to_post: "contacted", commented: "contacted", reached_out: "contacted",
   connection_pending: "connection_pending", connection_sent: "connection_pending", connection_requested: "connection_pending", invited: "connection_pending", pending: "connection_pending", request_sent: "connection_pending",
   connected: "connected", accepted: "connected",
-  responded: "responded", replied: "responded", reply: "responded", interested: "responded", in_conversation: "responded",
+  responded: "responded", replied: "responded", reply: "responded", interested: "responded", warm: "responded", in_conversation: "responded",
   call_booked: "call_booked", call: "call_booked", meeting: "call_booked", meeting_booked: "call_booked", demo: "call_booked",
   pilot: "pilot", trial: "pilot", piloting: "pilot",
   paying: "paying", paid: "paying", customer: "paying", won: "paying", closed_won: "paying",
