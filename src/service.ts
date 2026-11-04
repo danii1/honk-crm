@@ -865,8 +865,9 @@ export class CrmService {
     const now = toDate(i.now) ?? new Date();
     const start = startOfLocalDay(now, i.tz);
     const [drafted, sent, last] = await Promise.all([this.repo.draftsCreatedSince("x", start), this.repo.touchesSince("x", start), this.repo.lastSentTouch("x")]);
-    const sentToday = sent.filter((t) => t.sentAt! <= now).length;
-    const lastAt = last?.sentAt ?? null;
+    const upToNow = sent.filter((t) => t.sentAt! <= now);
+    const sentToday = upToNow.length;
+    const lastAt = upToNow.reduce<Date | null>((m, t) => (!m || t.sentAt! > m ? t.sentAt! : m), null) ?? (last?.sentAt && last.sentAt <= now ? last.sentAt : null);
     const gapMs = i.min_gap_minutes * 60_000;
     const gap_ok = !lastAt || now.getTime() - lastAt.getTime() >= gapMs;
     const cap_ok = sentToday < i.max_per_day;
@@ -984,6 +985,7 @@ export class CrmService {
     const companyByName = new Map(companies.map((c) => [normalizeName(c.name), c]));
     const stateMap = new Map(states.map((s) => [stateKey(s.contactId, s.channel), s]));
 
+    const seenThisRun = new Set<string>();
     const report = { dry_run: !write, total_rows: records.length, created: 0, updated: 0, unchanged: 0, skipped: 0, missing_columns: missing, unknown_statuses: {} as Record<string, number>, rows: [] as ImportRowReport[] };
 
     for (const [n, r] of records.entries()) {
@@ -1060,9 +1062,12 @@ export class CrmService {
         signalSummary: p.signalSummary,
       };
       const changes: Record<string, unknown> = {};
+      // A contact already handled by an earlier row in this file only gets blanks filled (first row wins), so re-runs are stable.
+      const fillOnly = !!existing && seenThisRun.has(existing.id);
       for (const [k, v] of Object.entries(desired)) {
         if (v === null || v === undefined) continue;
         const cur = existing?.[k as keyof C];
+        if (fillOnly && cur !== null && cur !== undefined) continue;
         if (cur instanceof Date && v instanceof Date ? cur.getTime() !== v.getTime() : cur !== v) changes[k] = v;
       }
       // Identities/notes/company/campaign only fill blanks.
@@ -1106,10 +1111,12 @@ export class CrmService {
         index(saved);
       } else if (!write && !existing) {
         // Simulate so later rows in the same file dedupe against this one.
-        const ghost = { id: `(row ${rowNo})`, name: p.name, companyId, contactType, stage: overall, email: changes.email ?? null, linkedin: changes.linkedin ?? null, xHandle: changes.xHandle ?? null, redditUser: changes.redditUser ?? null, github: changes.github ?? null } as unknown as C;
+        const ghost = { ...changes, id: `(row ${rowNo})`, name: p.name, companyId, contactType, stage: overall, email: changes.email ?? null, linkedin: changes.linkedin ?? null, xHandle: changes.xHandle ?? null, redditUser: changes.redditUser ?? null, github: changes.github ?? null } as unknown as C;
         contacts.push(ghost);
         index(ghost);
       }
+      if (contactId) seenThisRun.add(contactId);
+      else if (!write && !existing) seenThisRun.add(`(row ${rowNo})`);
       report.rows.push({ row: rowNo, action, label, contact_id: contactId, changes: action === "unchanged" ? undefined : changes, company: companyAction, warnings });
     }
     return report;
