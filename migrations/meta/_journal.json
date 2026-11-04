@@ -57,6 +57,13 @@
       "when": 1793781735027,
       "tag": "0007_automation_threads",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1793782842647,
+      "tag": "0008_channel_registry",
+      "breakpoints": true
     }
   ]
 }

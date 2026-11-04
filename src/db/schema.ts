@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { organization } from "./auth-schema";
+import { BUILTIN_CHANNELS, EXTRA_SOURCES } from "../channels";
 
 export * from "./auth-schema";
 
@@ -23,14 +24,15 @@ export const STAGES = [
   "responded", "call_booked", "pilot", "paying", "lost", "do_not_contact",
 ] as const;
 /** Channels with per-contact state. */
-export const OUTREACH_CHANNELS = ["x", "linkedin", "reddit", "email", "threads"] as const;
-export const CHANNELS = ["email", "linkedin", "x", "reddit", "threads", "other"] as const;
-export const SOURCES = ["x", "linkedin", "reddit", "web", "prowlo", "email", "threads"] as const;
+/** Built-in channel ids from the registry (src/channels.ts); org custom channels are added at runtime. Not DB enums. */
+export const OUTREACH_CHANNELS: readonly string[] = BUILTIN_CHANNELS.map((c) => c.id);
+export const CHANNELS: readonly string[] = [...OUTREACH_CHANNELS, "other"];
+export const SOURCES: readonly string[] = [...OUTREACH_CHANNELS, ...EXTRA_SOURCES];
 export const MATCH_MODES = ["exact", "fuzzy"] as const;
 export const CONTACT_TYPES = ["lead", "competitor"] as const;
 export const DRAFT_STATES = ["drafted", "approved", "sent", "discarded"] as const;
 export const BLOCK_KINDS = ["name", "handle", "domain"] as const;
-export type OutreachChannel = (typeof OUTREACH_CHANNELS)[number];
+export type OutreachChannel = string;
 export type DraftState = (typeof DRAFT_STATES)[number];
 export const DIRECTIONS = ["outbound", "inbound"] as const;
 export const TOUCH_STATUSES = ["draft", "sent", "replied", "bounced"] as const;
@@ -100,7 +102,7 @@ export const contacts = sqliteTable(
     sequenceId: text("sequence_id").references(() => sequences.id, { onDelete: "set null" }),
     campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
     contactType: text("contact_type", { enum: CONTACT_TYPES }).notNull().default("lead"),
-    source: text("source", { enum: SOURCES }),
+    source: text("source"),
     sourceDetail: text("source_detail"), // raw source value from imports
     profileUrl: text("profile_url"), // raw profile_url as imported/provided
     website: text("website"), // personal/company site when profile_url is not a social profile
@@ -144,7 +146,7 @@ export const outreachTouches = sqliteTable(
       .notNull()
       .references(() => contacts.id, { onDelete: "cascade" }),
     sequenceId: text("sequence_id").references(() => sequences.id, { onDelete: "set null" }),
-    channel: text("channel", { enum: CHANNELS }).notNull(),
+    channel: text("channel").notNull(),
     direction: text("direction", { enum: DIRECTIONS }).notNull().default("outbound"),
     status: text("status", { enum: TOUCH_STATUSES }).notNull().default("sent"),
     subject: text("subject"),
@@ -259,7 +261,7 @@ export const channelStates = sqliteTable(
     contactId: text("contact_id")
       .notNull()
       .references(() => contacts.id, { onDelete: "cascade" }),
-    channel: text("channel", { enum: OUTREACH_CHANNELS }).notNull(),
+    channel: text("channel").notNull(),
     stage: text("stage", { enum: STAGES }).notNull().default("new"),
     lastTouchAt: integer("last_touch_at", { mode: "timestamp_ms" }),
     nextFollowupAt: integer("next_followup_at", { mode: "timestamp_ms" }),
@@ -300,7 +302,7 @@ export const drafts = sqliteTable(
     contactId: text("contact_id")
       .notNull()
       .references(() => contacts.id, { onDelete: "cascade" }),
-    channel: text("channel", { enum: OUTREACH_CHANNELS }).notNull(),
+    channel: text("channel").notNull(),
     campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
     text: text("text").notNull(),
     intentUrl: text("intent_url"),
@@ -334,7 +336,7 @@ export const events = sqliteTable(
     contactId: text("contact_id")
       .notNull()
       .references(() => contacts.id, { onDelete: "cascade" }),
-    channel: text("channel", { enum: OUTREACH_CHANNELS }).notNull(),
+    channel: text("channel").notNull(),
     type: text("type", { enum: EVENT_TYPES }).notNull(),
     externalId: text("external_id").notNull(),
     threadId: text("thread_id"),
@@ -357,3 +359,41 @@ export const orgSettings = sqliteTable("org_settings", {
   followupRules: text("followup_rules", { mode: "json" }).$type<{ followup_days?: Partial<Record<OutreachChannel, number>>; stale_days?: Partial<Record<OutreachChannel, number>> }>(),
   updatedAt: updatedAt(),
 });
+
+/** Generic identities (source of truth for dedupe/lookup). Legacy contacts columns are mirrored here. */
+export const contactIdentities = sqliteTable(
+  "contact_identities",
+  {
+    id: id(),
+    orgId: orgId(),
+    contactId: text("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    valueNormalized: text("value_normalized").notNull(),
+    scope: text("scope").notNull().default(""),
+    raw: text("raw"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("contact_identities_uq").on(t.orgId, t.kind, t.scope, t.valueNormalized),
+    index("contact_identities_contact_idx").on(t.orgId, t.contactId),
+    index("contact_identities_value_idx").on(t.orgId, t.valueNormalized),
+  ],
+);
+
+/** Org-defined channels added at runtime (no migration needed). */
+export const customChannels = sqliteTable(
+  "custom_channels",
+  {
+    orgId: orgId(),
+    id: text("id").notNull(),
+    label: text("label").notNull(),
+    urlPattern: text("url_pattern"),
+    prefix: text("prefix"),
+    followupDays: integer("followup_days"),
+    staleDays: integer("stale_days"),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.orgId, t.id] })],
+);

@@ -90,7 +90,7 @@ describe("record_event + threads", () => {
 describe("followup rules, stale, bulk, overview", () => {
   it("applies configurable per-channel follow-ups and stale thresholds", async () => {
     const { svc } = await makeOrg();
-    expect((await svc.get_followup_rules({})).followup_days).toEqual({ x: 3, linkedin: 5, email: 4, reddit: 4, threads: 3 });
+    expect((await svc.get_followup_rules({})).followup_days).toMatchObject({ x: 3, linkedin: 5, email: 4, reddit: 4, threads: 3 });
     await svc.set_followup_rules({ followup_days: { email: 2 }, stale_days: { x: 1 } });
     const rules = await svc.get_followup_rules({});
     expect(rules.followup_days.email).toBe(2);

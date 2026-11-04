@@ -78,6 +78,40 @@ Also `GET /v1/me`.
 
 **Identities:** email, x_handle, linkedin_url, reddit_user and github are normalized (lowercase, URL and `@`/`u/`
 prefixes stripped) and unique per org. Company domain is unique per org.
+## Channels
+
+Channels and identities are config-driven (`src/channels.ts`); adding a channel needs no migration. Every identity lives in
+`contact_identities` (unique per org + kind + scope + value), which drives dedupe, `find_existing`, `find_by_identity`,
+`is_competitor` and imports. The legacy contact columns (`email`, `x`, `linkedin`, `reddit_user`, `github`,
+`threads_handle`) stay and are kept in sync, so the old tool args still work. Use `identities: [{kind, value, scope?}]` on
+`upsert_contact` / `find_existing` / `record_event` for anything else.
+
+| Channel | Identity kind | Profile URL parsed | Import prefix | Follow-up / stale days |
+|---|---|---|---|---|
+| x | `x_handle` | x.com/, twitter.com/ | `x:`, `twitter:` | 3 / 6 |
+| linkedin | `linkedin_url` | linkedin.com/in/ | `li:`, `linkedin:` | 5 / 10 |
+| reddit | `reddit_user` | reddit.com/user/, u/ | `rd:`, `reddit:` | 4 / 8 |
+| email | `email` | mailto: | `email:`, `mailto:` | 4 / 8 |
+| threads | `threads_handle` | threads.net/@, threads.com/@ | `threads:`, `th:` | 3 / 6 |
+| hackernews | `hn_user` | news.ycombinator.com/user?id= | `hn:` | 4 / 8 |
+| github | `github` | github.com/ | `gh:`, `github:` | 5 / 10 |
+| discord | `discord_user` + server scope | discord.com/users/ | `discord:` | 3 / 7 |
+| slack_community | `slack_user` + workspace scope | `<ws>`.slack.com/team/U… | `slack:` | 3 / 7 |
+| bluesky | `bsky_handle` | bsky.app/profile/ | `bsky:`, `bluesky:` | 3 / 6 |
+| tiktok | `tiktok` | tiktok.com/@ | `tiktok:`, `tt:` | 4 / 8 |
+| instagram | `instagram` | instagram.com/ | `ig:`, `instagram:` | 3 / 6 |
+| youtube | `youtube` | youtube.com/@, youtube.com/channel/ | `yt:`, `youtube:` | 5 / 10 |
+| facebook | `facebook` | facebook.com/, profile.php?id= | `fb:`, `facebook:` | 4 / 8 |
+| telegram | `telegram` | t.me/ | `tg:`, `telegram:` | 3 / 6 |
+| whatsapp (private) | `whatsapp` (E.164) | wa.me/ | `wa:`, `whatsapp:` | 3 / 6 |
+
+Sources and channels are validated against the registry (builtins + org custom channels). **WhatsApp is private**: numbers are masked in
+`get_contact`, `export_csv` (the `identities` column), `find_by_identity` and everywhere else. The only exception is an admin
+passing `include_private: true` to `get_contact` or `export_csv`. **Custom channels:** admins call `add_custom_channel`
+(`id, label, url_pattern` with `{handle}`, `prefix, followup_days, stale_days`). The channel then works at runtime in
+identities, imports, channel states and follow-ups. `list_channels` shows the registry, and per-org follow-up overrides
+still come from `set_followup_rules`.
+
 **Stages** (overall and per channel x/linkedin/reddit/email): `new, qualified, drafted, contacted,
 connection_pending, connected, responded, call_booked, pilot, paying, lost, do_not_contact`. Automatic moves are
 forward only; `do_not_contact` is sticky. The overall stage is the furthest channel stage. Explicit

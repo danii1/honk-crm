@@ -2,6 +2,7 @@ import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, like, lt, lte, ne,
 import { drizzle, type DrizzleD1Database } from "drizzle-orm/d1";
 import * as s from "./db/schema";
 import { CrmError, type OrgContext } from "./context";
+import { LEGACY_KINDS, type CustomChannelConfig, type Identity } from "./channels";
 
 export type DB = DrizzleD1Database<typeof s>;
 export const createDb = (d1: D1Database): DB => drizzle(d1, { schema: s });
@@ -59,18 +60,70 @@ export class Repository {
       where: and(eq(s.contacts.orgId, this.orgId), eq(s.contacts.email, email)),
     });
   }
-  async contactsByIdentity(ids: { email?: string | null; linkedin?: string | null; xHandle?: string | null; redditUser?: string | null; github?: string | null; threadsHandle?: string | null }) {
-    const c = s.contacts;
-    const ors = [
-      ids.email ? eq(c.email, ids.email) : undefined,
-      ids.linkedin ? eq(c.linkedin, ids.linkedin) : undefined,
-      ids.xHandle ? eq(c.xHandle, ids.xHandle) : undefined,
-      ids.redditUser ? eq(c.redditUser, ids.redditUser) : undefined,
-      ids.threadsHandle ? eq(c.threadsHandle, ids.threadsHandle) : undefined,
-      ids.github ? eq(c.github, ids.github) : undefined,
-    ].filter((x): x is SQL => !!x);
+  /** Legacy identity fields -> generic identities. */
+  static legacyIdentities(ids: { email?: string | null; linkedin?: string | null; xHandle?: string | null; redditUser?: string | null; github?: string | null; threadsHandle?: string | null }): Identity[] {
+    return LEGACY_KINDS.flatMap((k) => (ids[k.legacyColumn!] ? [{ kind: k.kind, value: ids[k.legacyColumn!]!, scope: "" }] : []));
+  }
+  /** Rows of contact_identities matching any of the given identities. */
+  async identityMatches(list: Identity[]) {
+    const t = s.contactIdentities;
+    const ors = list.map((i) => and(eq(t.kind, i.kind), eq(t.scope, i.scope ?? ""), eq(t.valueNormalized, i.value))!);
     if (!ors.length) return [];
-    return this.db.select().from(c).where(and(eq(c.orgId, this.orgId), or(...ors)));
+    const out: (typeof t.$inferSelect)[] = [];
+    for (let n = 0; n < ors.length; n += 40) out.push(...(await this.db.select().from(t).where(and(eq(t.orgId, this.orgId), or(...ors.slice(n, n + 40))))));
+    return out;
+  }
+  /** Contacts owning any identity (legacy fields and/or generic identities); backed by contact_identities. */
+  async contactsByIdentity(ids: { email?: string | null; linkedin?: string | null; xHandle?: string | null; redditUser?: string | null; github?: string | null; threadsHandle?: string | null }, extra: Identity[] = []) {
+    const rows = await this.identityMatches([...Repository.legacyIdentities(ids), ...extra]);
+    const contactIds = [...new Set(rows.map((r) => r.contactId))];
+    if (!contactIds.length) return [];
+    const cs = await this.db.select().from(s.contacts).where(and(eq(s.contacts.orgId, this.orgId), inArray(s.contacts.id, contactIds)));
+    return cs.map((c) => Object.assign(c, { matchedKinds: rows.filter((r) => r.contactId === c.id).map((r) => r.kind) }));
+  }
+  async identitiesFor(contactId: string) {
+    const t = s.contactIdentities;
+    return this.db.select().from(t).where(and(eq(t.orgId, this.orgId), eq(t.contactId, contactId))).orderBy(asc(t.kind));
+  }
+  async allIdentities() {
+    return this.db.select().from(s.contactIdentities).where(eq(s.contactIdentities.orgId, this.orgId));
+  }
+  /** Adds generic identities to a contact; an identity owned by another contact is a conflict. */
+  async addIdentities(contactId: string, list: Identity[]) {
+    if (!list.length) return [];
+    const owners = await this.identityMatches(list);
+    const clash = owners.find((o) => o.contactId !== contactId);
+    if (clash) throw new CrmError("conflict", `${clash.kind} ${clash.scope ? `${clash.scope}/` : ""}${clash.valueNormalized} already belongs to contact ${clash.contactId}`);
+    const have = new Set(owners.map((o) => `${o.kind}|${o.scope}|${o.valueNormalized}`));
+    const fresh = list.filter((i, n) => !have.has(`${i.kind}|${i.scope}|${i.value}`) && list.findIndex((j) => j.kind === i.kind && j.scope === i.scope && j.value === i.value) === n);
+    if (!fresh.length) return [];
+    return this.db.insert(s.contactIdentities).values(fresh.map((i) => ({ orgId: this.orgId, contactId, kind: i.kind, valueNormalized: i.value, scope: i.scope ?? "", raw: i.raw ?? i.value }))).returning();
+  }
+  async removeIdentity(contactId: string, i: Identity) {
+    const t = s.contactIdentities;
+    await this.db.delete(t).where(and(eq(t.orgId, this.orgId), eq(t.contactId, contactId), eq(t.kind, i.kind), eq(t.scope, i.scope ?? ""), eq(t.valueNormalized, i.value)));
+  }
+  /** Mirrors the legacy identity columns of a contact row into contact_identities. */
+  private async syncLegacy(c: Contact) {
+    const t = s.contactIdentities;
+    const want = Repository.legacyIdentities(c);
+    const have = (await this.db.select().from(t).where(and(eq(t.orgId, this.orgId), eq(t.contactId, c.id), inArray(t.kind, LEGACY_KINDS.map((k) => k.kind)))));
+    const stale = have.filter((h) => !want.some((w) => w.kind === h.kind && w.value === h.valueNormalized));
+    if (stale.length) await this.db.delete(t).where(and(eq(t.orgId, this.orgId), inArray(t.id, stale.map((h) => h.id))));
+    const add = want.filter((w) => !have.some((h) => h.kind === w.kind && h.valueNormalized === w.value));
+    if (add.length) await this.db.insert(t).values(add.map((w) => ({ orgId: this.orgId, contactId: c.id, kind: w.kind, valueNormalized: w.value, scope: "", raw: w.value }))).onConflictDoNothing();
+  }
+  // ---- custom channels
+  async customChannels(): Promise<CustomChannelConfig[]> {
+    return this.db.select().from(s.customChannels).where(eq(s.customChannels.orgId, this.orgId)).orderBy(asc(s.customChannels.id));
+  }
+  async upsertCustomChannel(v: CustomChannelConfig) {
+    const [row] = await this.db
+      .insert(s.customChannels)
+      .values({ ...v, orgId: this.orgId })
+      .onConflictDoUpdate({ target: [s.customChannels.orgId, s.customChannels.id], set: { label: v.label, urlPattern: v.urlPattern, prefix: v.prefix, followupDays: v.followupDays, staleDays: v.staleDays } })
+      .returning();
+    return row!;
   }
   async contactsByDomain(domain: string) {
     const c = s.contacts;
@@ -119,6 +172,7 @@ export class Repository {
   }
   async insertContact(v: Omit<typeof s.contacts.$inferInsert, "orgId" | "id">) {
     const [row] = await this.db.insert(s.contacts).values({ ...v, orgId: this.orgId }).returning();
+    await this.syncLegacy(row!);
     return row!;
   }
   async updateContact(id: string, v: Partial<typeof s.contacts.$inferInsert>) {
@@ -128,6 +182,7 @@ export class Repository {
       .where(and(eq(s.contacts.orgId, this.orgId), eq(s.contacts.id, id)))
       .returning();
     if (!row) throw new CrmError("not_found", `contact ${id} not found`);
+    if (LEGACY_KINDS.some((k) => (k.legacyColumn as string) in v)) await this.syncLegacy(row);
     return row;
   }
   async searchContacts(q: { query?: string; stage?: s.Stage; companyId?: string; tag?: string; limit: number }) {
@@ -144,6 +199,10 @@ export class Repository {
           like(s.contacts.redditUser, p),
           like(s.contacts.threadsHandle, p),
           like(s.contacts.linkedin, p),
+          inArray(
+            s.contacts.id,
+            this.db.select({ id: s.contactIdentities.contactId }).from(s.contactIdentities).where(and(eq(s.contactIdentities.orgId, this.orgId), like(sql`lower(${s.contactIdentities.valueNormalized})`, p))),
+          ),
           inArray(
             s.contacts.companyId,
             this.db
