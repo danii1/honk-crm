@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { makeOrg } from "./helpers";
-import { parseImportRow } from "../src/service";
+import { db, makeOrg } from "./helpers";
+import { CrmService, parseImportRow } from "../src/service";
 import { extractIdentities, mapStatus, parseCsv } from "../src/csv";
 import { normalizeLinkedin, normalizeRedditUser, normalizeXHandle, endOfLocalDay, startOfLocalDay } from "../src/normalize";
 import { advance, rollup } from "../src/rules";
@@ -172,7 +172,11 @@ describe("x pacing", () => {
 
 describe("report", () => {
   it("computes per-channel rates, LinkedIn acceptance and goal progress", async () => {
-    const { svc } = await makeOrg();
+    const { svc, ctx } = await makeOrg();
+    expect((await svc.outreach_report({})).goal).toBeNull();
+    const member = new CrmService(db, { ...ctx, role: "member" });
+    await expect(member.set_goals({ targets: [{ stage: "pilot", count: 4 }] })).rejects.toThrow(/admin/);
+    await svc.set_goals({ targets: [{ stage: "pilot", count: 4 }, { stage: "paying", count: 2 }], deadline: "2027-12-15" });
     const { campaign } = await svc.upsert_campaign({ name: "C1" });
     const mk = async (h: string, li: string, stage?: "pilot" | "paying") => {
       const { contact } = await svc.upsert_contact({ x_handle: h, campaign_id: campaign.id });
@@ -186,7 +190,12 @@ describe("report", () => {
     const rep = await svc.outreach_report({});
     expect(rep.by_channel.linkedin).toMatchObject({ contacted: 4, invites: 4, accepted: 3, acceptance_rate_pct: 75, responded: 2, response_rate_pct: 50 });
     expect(rep.by_campaign[0]).toMatchObject({ name: "C1", leads: 4, pilots: 2, paying: 1 });
-    expect(rep.goal).toMatchObject({ paying: 1, pilots: 2, met: false });
+    expect(rep.goal).toMatchObject({ targets: [{ stage: "pilot", current: 2, target: 4 }, { stage: "paying", current: 1, target: 2 }], deadline: "2027-12-15", met: false });
+    expect((await svc.get_goals()).targets).toHaveLength(2);
+    const { svc: other } = await makeOrg();
+    expect((await other.outreach_report({})).goal).toBeNull();
+    await svc.set_goals({ targets: [] });
+    expect((await svc.daily_overview({})).goal).toBeNull();
   });
 });
 

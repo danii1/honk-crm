@@ -5,7 +5,7 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export const TZ = "Asia/Saigon";
+export const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
 export function formatDate(value?: string | Date | null, opts: Intl.DateTimeFormatOptions = { dateStyle: "medium", timeStyle: "short" }) {
   if (!value) return "—";

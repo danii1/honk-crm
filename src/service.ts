@@ -43,6 +43,11 @@ const markSentBase = {
 };
 const markSent = z.object(markSentBase).refine((v) => v.draft_id || v.intent_url || v.post_id || v.external_id || v.external_url, "give draft_id, intent_url, post_id, external_id or external_url");
 const channelDays = z.record(chan, z.number().min(0).max(365)).optional();
+const goalTarget = z.object({ stage: z.enum(STAGES).refine((stage) => stage !== "lost" && stage !== "do_not_contact", "Choose an active stage"), count: z.number().int().min(1).max(1_000_000) });
+const goalSettings = z.object({
+  targets: z.array(goalTarget).max(STAGES.length).refine((targets) => new Set(targets.map((t) => t.stage)).size === targets.length, "Each stage can have one target"),
+  deadline: z.iso.date().optional(),
+});
 const toDate = (v: string | undefined) => (v === undefined ? undefined : new Date(v));
 
 const CLEARABLE = ["x_handle", "linkedin_url", "reddit_user", "github", "threads_handle", "email", "profile_url", "website", "company_id"] as const;
@@ -302,10 +307,9 @@ export const schemas = {
   }),
   outreach_report: z.object({
     tz: z.string().default("Asia/Saigon"),
-    goal_deadline: z.string().default("2026-12-15"),
-    goal_paying: z.number().int().default(3),
-    goal_pilots: z.number().int().default(10),
   }),
+  get_goals: z.object({}),
+  set_goals: goalSettings.extend({ reason: reasonField }),
   mark_draft_sent: markSent,
   sync_sent: z.object({
     items: z.array(markSent).min(1).max(200),
@@ -746,7 +750,8 @@ export class CrmService {
         if (dup) return { touch: dup, deduped: true, follow_up_task: null };
       }
       const now = new Date();
-      const touch = await this.recordTouch(contact.id, { ...i, sentAt: toDate(i.sent_at) ?? now, sequenceId: i.sequence_id ?? contact.sequenceId });
+      const occurredAt = toDate(i.sent_at) ?? now;
+      const touch = await this.recordTouch(contact.id, { ...i, sentAt: occurredAt, sequenceId: i.sequence_id ?? contact.sequenceId });
       if (i.channel === "other") {
         // No channel state for "other": advance the overall stage directly.
         const inbound = i.direction === "inbound" || i.status === "replied";
@@ -759,7 +764,7 @@ export class CrmService {
           i.channel,
           {
             stage: inbound ? "responded" : i.status === "sent" ? "contacted" : undefined,
-            lastTouchAt: i.status === "draft" ? undefined : now,
+            lastTouchAt: i.status === "draft" ? undefined : occurredAt,
             ...(i.next_followup_at ? { nextFollowupAt: new Date(i.next_followup_at) } : inbound ? { nextFollowupAt: null } : {}),
           },
           i.reason,
@@ -1266,6 +1271,21 @@ export class CrmService {
     return this.get_followup_rules();
   }
 
+  async get_goals(_raw: Input<"get_goals"> = {}) {
+    requireScope(this.ctx, "crm:read");
+    return (await this.repo.getSettings())?.goals ?? { targets: [] };
+  }
+
+  async set_goals(raw: Input<"set_goals">) {
+    requireScope(this.ctx, "crm:write");
+    requireRole(this.ctx, "admin");
+    const i = await this.parse("set_goals", raw);
+    const goals = { targets: i.targets, ...(i.deadline && { deadline: i.deadline }) };
+    await this.repo.setGoals(goals);
+    await this.repo.appendActivity({ action: "settings.goals", entityType: "org", entityId: this.ctx.orgId, reason: i.reason, payload: goals });
+    return goals;
+  }
+
   async bulk_update_stage(raw: Input<"bulk_update_stage">) {
     const i = await this.parse("bulk_update_stage", raw);
     return this.idempotent("bulk_update_stage", i, async () => {
@@ -1522,7 +1542,7 @@ export class CrmService {
   async outreach_report(raw: Input<"outreach_report">) {
     requireScope(this.ctx, "crm:read");
     const i = await this.parse("outreach_report", raw);
-    const [contacts, states, campaigns] = await Promise.all([this.repo.allContacts(), this.repo.allChannelStates(), this.repo.listCampaigns()]);
+    const [contacts, states, campaigns, settings] = await Promise.all([this.repo.allContacts(), this.repo.allChannelStates(), this.repo.listCampaigns(), this.repo.getSettings()]);
     const leads = new Map(contacts.filter((c) => c.contactType === "lead").map((c) => [c.id, c]));
 
     const by_channel = Object.fromEntries(
@@ -1564,22 +1584,19 @@ export class CrmService {
       { campaign_id: null, name: "(no campaign)", ...summarize(all.filter((x) => !x.campaignId)) },
     ];
     const totals = summarize(all);
+    const goals = settings?.goals;
     const today = localDateString(new Date(), i.tz);
-    const days_left = Math.ceil((Date.parse(`${i.goal_deadline}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / DAY);
+    const days_left = goals?.deadline ? Math.ceil((Date.parse(`${goals.deadline}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / DAY) : null;
+    const targets = goals?.targets.map(({ stage, count }) => {
+      const current = all.filter((c) => c.stage !== "lost" && c.stage !== "do_not_contact" && rank(c.stage) >= rank(stage)).length;
+      return { stage, current, target: count, progress_pct: rate(current, count) };
+    }) ?? [];
     return {
       totals,
       by_channel,
       by_campaign,
       stages: Object.fromEntries(STAGES.map((st) => [st, all.filter((c) => c.stage === st).length])),
-      goal: {
-        target: `${i.goal_paying} paying or ${i.goal_pilots} pilots by ${i.goal_deadline}`,
-        paying: totals.paying,
-        pilots: totals.pilots,
-        met: totals.paying >= i.goal_paying || totals.pilots >= i.goal_pilots,
-        paying_progress_pct: rate(totals.paying, i.goal_paying),
-        pilots_progress_pct: rate(totals.pilots, i.goal_pilots),
-        days_left,
-      },
+      goal: targets.length ? { targets, deadline: goals?.deadline ?? null, days_left, met: targets.every((t) => t.current >= t.target) } : null,
       notes: "Counts are of leads (competitors excluded). Pilots include paying. Contacts later marked lost count as contacted only if a touch was recorded.",
     };
   }
@@ -2066,8 +2083,10 @@ export const TOOL_DESCRIPTIONS: Record<keyof typeof schemas, string> = {
   find_by_thread: "Find the contact owning a thread (tweet conversation/status id, gmail threadId, reddit post id) on a channel, via touches, drafts or events.",
   get_followup_rules: "Per-org follow-up and stale days per channel (defaults from the channel registry, e.g. x 3/6, linkedin 5/10, email 4/8, reddit 4/8; custom channels included).",
   set_followup_rules: "Admin: change per-channel followup_days and/or stale_days for the org.",
+  get_goals: "Get this organization's stage targets and optional deadline. An empty target list means no goals are configured.",
+  set_goals: "Admin: replace this organization's stage targets and optional deadline. Use an empty targets array to clear goals.",
   bulk_update_stage: "Bulk stage set: items[] of {contact_id, channel?, stage}. With channel sets that channel's stage exactly; without, the overall stage. Per-item results.",
-  daily_overview: "Today's (Asia/Saigon) work: follow-ups due, LinkedIn connected awaiting first message, new replies/events in 24h, pending drafts, X pacing, stale flags, goal progress, stage counts.",
+  daily_overview: "Today's work in the requested timezone: follow-ups due, new replies/events in 24h, pending drafts, stale flags, configured goal progress, stage counts and channel signals.",
   search_contacts: "Search contacts in this org by text (name, email, role, handles, company), stage, company or tag.",
   get_contact: "Get one contact with company, tags, per-channel states, drafts, recent touches, open tasks and notes. Includes identities[]; whatsapp numbers are masked unless an admin passes include_private.",
   upsert_contact:
@@ -2101,16 +2120,16 @@ export const TOOL_DESCRIPTIONS: Record<keyof typeof schemas, string> = {
   stale_no_response: "Contacts contacted / connection_pending / connected on a channel with no touch for at least `days` days.",
   linkedin_needs_first_message: "LinkedIn contacts at connection_pending or connected with no outbound LinkedIn message logged yet.",
   x_pacing_today: "X pacing for today in tz: drafts created, sends, last send time, and whether the 60-min gap and <=8/day limits allow a send now (next_allowed_at).",
-  outreach_report: "Per channel and per campaign: contacted, responded, response rate, LinkedIn acceptance rate, pilots, paying; plus goal tracker (3 paying or 10 pilots by 2026-12-15).",
+  outreach_report: "Per channel and per campaign: contacted, responded, response rate, LinkedIn acceptance rate, pilots, paying; plus configured organization stage targets, if any.",
   import_leads_csv: "Import a leads CSV (handle,name,profile_url,...,status,first_seen,notes). Maps status->stage, extracts emails/LinkedIn/GitHub/Reddit/X from notes, dedupes, skips competitors, idempotent on re-run. dry_run defaults to TRUE: returns the report without writing.",
   export_csv: "Export contacts as CSV (import columns first, then ids, identities and per-channel stage/follow-up). An identities column lists every identity (kind@scope:value); private ones (whatsapp) masked unless an admin passes include_private.",
 };
 /** Tools that need admin (or owner) on top of crm:write. */
-export const ADMIN_CRM_TOOLS = new Set<string>(["add_competitor", "update_competitor", "remove_competitor", "purge_competitors", "upsert_campaign", "set_followup_rules", "add_custom_channel"]);
+export const ADMIN_CRM_TOOLS = new Set<string>(["add_competitor", "update_competitor", "remove_competitor", "purge_competitors", "upsert_campaign", "set_followup_rules", "set_goals", "add_custom_channel"]);
 export const TOOL_NAMES = Object.keys(schemas) as (keyof typeof schemas)[];
 export const WRITE_TOOLS = new Set<keyof typeof schemas>([
   "add_custom_channel",
   "upsert_contact", "upsert_company", "log_touch", "update_stage", "create_task", "complete_task", "add_note",
   "add_competitor", "update_competitor", "remove_competitor", "purge_competitors", "set_channel_state", "create_draft", "transition_draft", "upsert_campaign", "import_leads_csv",
-  "mark_draft_sent", "sync_sent", "record_event", "set_followup_rules", "bulk_update_stage",
+  "mark_draft_sent", "sync_sent", "record_event", "set_followup_rules", "set_goals", "bulk_update_stage",
 ]);

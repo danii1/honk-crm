@@ -1,10 +1,10 @@
-import { ArrowRight, CalendarClock, CircleX, Clock, FileText, Flame, MailCheck, MessageSquare, Send, Target, Users } from "lucide-react";
+import { ArrowRight, CalendarClock, CircleX, Clock, FileText, Flame, MailCheck, MessageSquare, Target, Users } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { getOverview, type Overview } from "@/client/lib/api";
-import { LEAD_STAGES, stageCount } from "@/client/lib/constants";
+import { getOverview, setGoals, type Overview } from "@/client/lib/api";
+import { LEAD_STAGES, STAGES, stageCount } from "@/client/lib/constants";
 import { contactHrefById, stageHref } from "@/client/lib/links";
-import { formatDate, formatDay, pct, titleCase } from "@/client/lib/utils";
+import { formatDate, formatDay, pct, titleCase, TZ } from "@/client/lib/utils";
 import { useApp } from "@/client/App";
 import { EmptyState } from "@/client/components/empty-state";
 import { PageHeader } from "@/client/components/page-header";
@@ -13,17 +13,21 @@ import { StageBadge } from "@/client/components/stage-badge";
 import { StatCard } from "@/client/components/stat-card";
 import { Badge } from "@/client/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/client/components/ui/card";
+import { Button } from "@/client/components/ui/button";
+import { Input } from "@/client/components/ui/input";
+import { Select } from "@/client/components/ui/select";
 import { Skeleton } from "@/client/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/client/components/ui/table";
 
 export function OverviewPage() {
-  const { pipeline } = useApp();
+  const { pipeline, me } = useApp();
   const [data, setData] = useState<Overview | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [revision, setRevision] = useState(0);
 
   useEffect(() => {
-    getOverview().then(setData).catch((e: Error) => setError(e.message));
-  }, []);
+    getOverview(TZ).then(setData).catch((e: Error) => setError(e.message));
+  }, [revision]);
 
   if (error) return <EmptyState title="Could not load today's overview" description={error} icon={CircleX} />;
   if (!data) return <OverviewSkeleton />;
@@ -42,8 +46,8 @@ export function OverviewPage() {
         description={
           <span className="flex flex-wrap items-center gap-2">
             <CalendarClock className="size-3.5" />
-            {data.date} · times in Asia/Saigon
-            <Badge variant="outline">{g.days_left} days left</Badge>
+            {data.date} · times in {data.tz}
+            {g?.days_left !== null && g?.days_left !== undefined ? <Badge variant="outline">{g.days_left >= 0 ? `${g.days_left} days left` : `${-g.days_left} days past deadline`}</Badge> : null}
           </span>
         }
       />
@@ -52,22 +56,11 @@ export function OverviewPage() {
         <StatCard label="Follow-ups due" value={dueCount} hint={`${data.followups_due.length} channel reminders · ${data.tasks_due.length} tasks`} icon={Clock} tone={data.followups_due.some((f) => f.overdue) ? "bad" : "warn"} />
         <StatCard label="New replies · 24h" value={data.new_replies.length} hint={`${data.events_last_24h.length} events in total`} icon={MessageSquare} tone={data.new_replies.length ? "good" : "default"} />
         <StatCard label="Drafts pending" value={data.drafts_pending.length} hint="Approved and drafted messages" icon={FileText} />
-        <StatCard label="X sends today" value={`${data.x_pacing.sent_today} / ${data.x_pacing.sent_today + data.x_pacing.remaining_today}`} hint={data.x_pacing.ok_to_send ? "Pacing allows a send now" : `Next send ${formatDate(data.x_pacing.next_allowed_at)}`} icon={Send} tone={data.x_pacing.ok_to_send ? "good" : "warn"} progress={(data.x_pacing.sent_today / Math.max(1, data.x_pacing.sent_today + data.x_pacing.remaining_today)) * 100} />
+        <StatCard label="Leads in pipeline" value={stageCount(data.stages, LEAD_STAGES)} hint="People still prospecting" icon={Users} />
       </div>
 
-      <div className="mt-3 grid gap-3 lg:grid-cols-3">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              <Target className="size-3.5" /> Goal progress
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <GoalRow label="Paying customers" value={g.paying} goal={3} progressPct={g.paying_progress_pct} />
-            <GoalRow label="Pilots" value={g.pilots} goal={10} progressPct={g.pilots_progress_pct} />
-            <p className="text-[11px] text-muted-foreground">{g.target}</p>
-          </CardContent>
-        </Card>
+      <div className={`mt-3 grid gap-3 ${g || me.role === "admin" || me.role === "owner" ? "lg:grid-cols-3" : "lg:grid-cols-2"}`}>
+        {(g || me.role === "admin" || me.role === "owner") ? <GoalsCard goal={g} canManage={me.role === "admin" || me.role === "owner"} onSaved={() => setRevision((n) => n + 1)} /> : null}
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -163,8 +156,7 @@ export function OverviewPage() {
           )}
         </SectionCard>
 
-        <SectionCard title="LinkedIn · connected, awaiting first message" count={data.linkedin_awaiting_first_message.length} icon={MailCheck}>
-          {data.linkedin_awaiting_first_message.length ? (
+        {data.linkedin_awaiting_first_message.length > 0 ? <SectionCard title="LinkedIn · connected, awaiting first message" count={data.linkedin_awaiting_first_message.length} icon={MailCheck}>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -187,10 +179,7 @@ export function OverviewPage() {
                 ))}
               </TableBody>
             </Table>
-          ) : (
-            <EmptyState title="Nothing waiting" description="Accepted invitations that still need a first message appear here." className="m-4" />
-          )}
-        </SectionCard>
+        </SectionCard> : null}
 
         <SectionCard title="Drafts pending" count={data.drafts_pending.length} icon={FileText}>
           {data.drafts_pending.length ? (
@@ -268,6 +257,69 @@ export function OverviewPage() {
         </SectionCard>
       </div>
     </>
+  );
+}
+
+type GoalDraft = { stage: string; count: number };
+
+function GoalsCard({ goal, canManage, onSaved }: { goal: Overview["goal"]; canManage: boolean; onSaved: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [targets, setTargets] = useState<GoalDraft[]>([]);
+  const [deadline, setDeadline] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const startEditing = () => {
+    setTargets(goal?.targets.map((t) => ({ stage: t.stage, count: t.target })) ?? []);
+    setDeadline(goal?.deadline ?? "");
+    setError(null);
+    setEditing(true);
+  };
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await setGoals({ targets, ...(targets.length && deadline && { deadline }) });
+      setEditing(false);
+      onSaved();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  const available = STAGES.filter((stage) => stage !== "lost" && stage !== "do_not_contact" && !targets.some((t) => t.stage === stage));
+  return (
+    <Card>
+      <CardHeader className="flex-row items-center justify-between gap-2 pb-2">
+        <CardTitle className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><Target className="size-3.5" /> Goals</CardTitle>
+        {canManage && !editing ? <Button size="sm" variant="ghost" onClick={startEditing}>{goal ? "Edit goals" : "Set goals"}</Button> : null}
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {editing ? (
+          <div className="space-y-3">
+            {targets.map((target, index) => (
+              <div key={target.stage} className="flex flex-wrap items-center gap-2">
+                <Select aria-label={`Goal ${index + 1} stage`} value={target.stage} onChange={(e) => setTargets((items) => items.map((item, i) => i === index ? { ...item, stage: e.target.value } : item))} className="min-w-36 flex-1">
+                  <option value={target.stage}>{titleCase(target.stage)}</option>
+                  {available.map((stage) => <option key={stage} value={stage}>{titleCase(stage)}</option>)}
+                </Select>
+                <Input aria-label={`Goal ${index + 1} target count`} type="number" min="1" max="1000000" value={target.count} onChange={(e) => setTargets((items) => items.map((item, i) => i === index ? { ...item, count: Number(e.target.value) } : item))} className="w-24" />
+                <Button size="sm" variant="ghost" onClick={() => setTargets((items) => items.filter((_, i) => i !== index))} aria-label={`Remove ${titleCase(target.stage)} goal`}>Remove</Button>
+              </div>
+            ))}
+            {available.length ? <Button size="sm" variant="outline" onClick={() => setTargets((items) => [...items, { stage: available[0]!, count: 1 }])}>Add target</Button> : null}
+            <label className="block text-xs font-medium">Deadline (optional)<Input type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} className="mt-1" /></label>
+            {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
+            <div className="flex gap-2"><Button size="sm" onClick={save} disabled={saving || targets.some((t) => !Number.isInteger(t.count) || t.count < 1)}>{saving ? "Saving…" : "Save goals"}</Button><Button size="sm" variant="ghost" onClick={() => setEditing(false)} disabled={saving}>Cancel</Button></div>
+          </div>
+        ) : goal ? (
+          <>
+            {goal.targets.map((target) => <GoalRow key={target.stage} label={titleCase(target.stage)} value={target.current} goal={target.target} progressPct={target.progress_pct} />)}
+            {goal.deadline ? <p className="text-[11px] text-muted-foreground">Deadline: {goal.deadline}</p> : null}
+          </>
+        ) : <p className="text-xs text-muted-foreground">Set a target for any pipeline stage to track progress here.</p>}
+      </CardContent>
+    </Card>
   );
 }
 

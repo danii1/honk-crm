@@ -6,6 +6,7 @@ import { cn } from "../lib/utils";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "./ui/dialog";
+import { TZ } from "../lib/utils";
 
 const NAV = [
   { to: "/", label: "Overview", icon: LayoutDashboard, end: true },
@@ -92,7 +93,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <p className="mt-0.5 truncate text-xs font-medium">{me.actor.name ?? (me.actor.type === "user" ? "Your account" : "Agent")}</p>
           <div className="mt-1.5 flex items-center justify-between gap-2">
             <Badge variant={me.role === "viewer" ? "muted" : "default"}>{me.role}</Badge>
-            <span className="text-[10px] text-muted-foreground">Asia/Saigon</span>
+            <span className="text-[10px] text-muted-foreground">{TZ}</span>
           </div>
         </div>
       </aside>
