@@ -24,6 +24,8 @@ export interface IdentityKind {
   normalize: (v: string) => string | null;
   /** Parses a URL (scheme/www stripped, original case) into a value (+ scope). */
   url?: (bare: string) => { value: string; scope?: string } | null;
+  /** Restricts scoped identity scopes (e.g. a Slack workspace subdomain before it enters a URL host). */
+  scopePattern?: RegExp;
   profileUrl?: (value: string, scope: string) => string;
 }
 
@@ -63,14 +65,16 @@ const bsky = (v: string) => {
   const full = h.includes(".") ? h : `${h}.bsky.social`;
   return /^(did:plc:[a-z0-9]{10,64}|([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,})$/.test(full) ? full : null;
 };
+/** Slack workspaces are a single DNS label; scopes must never change the URL host. */
+const SLACK_SCOPE_RE = /^[a-z0-9-]{1,63}$/;
 
 export const IDENTITY_KINDS: IdentityKind[] = [
   { kind: "email", channel: "email", label: "Email", legacyColumn: "email", legacyArg: "email", normalize: (v) => normalizeEmail(v.replace(/^mailto:/i, "")), profileUrl: (v) => `mailto:${v}` },
   { kind: "linkedin_url", channel: "linkedin", label: "LinkedIn", legacyColumn: "linkedin", legacyArg: "linkedin_url", normalize: (v) => normalizeLinkedin(v), url: (b) => (/^([a-z]{2}\.)?linkedin\.com\//i.test(b) ? (normalizeLinkedin(b) ? { value: normalizeLinkedin(b)! } : null) : null), profileUrl: (v) => `https://${v}` },
   { kind: "x_handle", channel: "x", label: "X", legacyColumn: "xHandle", legacyArg: "x_handle", normalize: (v) => normalizeXHandle(v), url: (b) => (/^(x|twitter)\.com\//i.test(b) ? (normalizeXHandle(b) ? { value: normalizeXHandle(b)! } : null) : null), profileUrl: (v) => `https://x.com/${v}` },
-  { kind: "reddit_user", channel: "reddit", label: "Reddit", legacyColumn: "redditUser", legacyArg: "reddit_user", normalize: (v) => normalizeRedditUser(v), url: (b) => (/^([a-z]+\.)?reddit\.com\/(u|user)\//i.test(b) ? (normalizeRedditUser(b) ? { value: normalizeRedditUser(b)! } : null) : null), profileUrl: (v) => `https://reddit.com/user/${v}` },
+  { kind: "reddit_user", channel: "reddit", label: "Reddit", legacyColumn: "redditUser", legacyArg: "reddit_user", normalize: (v) => normalizeRedditUser(v), url: (b) => (/^([a-z]+\.)?reddit\.com\/(u|user)\//i.test(b) ? (normalizeRedditUser(b) ? { value: normalizeRedditUser(b)! } : null) : null), profileUrl: (v) => `https://www.reddit.com/user/${v}` },
   { kind: "github", channel: "github", label: "GitHub", legacyColumn: "github", legacyArg: "github", normalize: (v) => normalizeGithub(v), url: (b) => (/^github\.com\//i.test(b) ? (normalizeGithub(b) ? { value: normalizeGithub(b)! } : null) : null), profileUrl: (v) => `https://github.com/${v}` },
-  { kind: "threads_handle", channel: "threads", label: "Threads", legacyColumn: "threadsHandle", legacyArg: "threads_handle", normalize: (v) => normalizeThreadsHandle(v), url: (b) => (/^threads\.(net|com)\//i.test(b) ? (normalizeThreadsHandle(b) ? { value: normalizeThreadsHandle(b)! } : null) : null), profileUrl: (v) => `https://www.threads.net/@${v}` },
+  { kind: "threads_handle", channel: "threads", label: "Threads", legacyColumn: "threadsHandle", legacyArg: "threads_handle", normalize: (v) => normalizeThreadsHandle(v), url: (b) => (/^threads\.(net|com)\//i.test(b) ? (normalizeThreadsHandle(b) ? { value: normalizeThreadsHandle(b)! } : null) : null), profileUrl: (v) => `https://www.threads.com/@${v}` },
   {
     kind: "hn_user", channel: "hackernews", label: "Hacker News",
     normalize: handle(/^[a-z0-9_-]{2,15}$/),
@@ -87,7 +91,8 @@ export const IDENTITY_KINDS: IdentityKind[] = [
     kind: "slack_user", channel: "slack_community", label: "Slack community", scoped: true,
     normalize: (v) => { const t = v.trim().replace(/^@/, ""); return /^[UW][A-Z0-9]{6,14}$/.test(t) ? t : /^[a-z0-9._-]{1,80}$/i.test(t) ? t.toLowerCase() : null; },
     url: (b) => { const m = b.match(/^([a-z0-9-]+)\.slack\.com\/team\/([UW][A-Z0-9]{6,14})/i); return m ? { value: m[2]!.toUpperCase(), scope: m[1]!.toLowerCase() } : null; },
-    profileUrl: (v, s) => (s && /^[UW]/.test(v) ? `https://${s}.slack.com/team/${v}` : ""),
+    scopePattern: SLACK_SCOPE_RE,
+    profileUrl: (v, s) => (s && SLACK_SCOPE_RE.test(s) && /^[UW]/.test(v) ? `https://${s}.slack.com/team/${v}` : ""),
   },
   { kind: "bsky_handle", channel: "bluesky", label: "Bluesky", normalize: bsky, url: (b) => { const m = b.match(/^bsky\.app\/profile\/([^/?#]+)/i); return m && bsky(m[1]!) ? { value: bsky(m[1]!)! } : null; }, profileUrl: (v) => `https://bsky.app/profile/${v}` },
   { kind: "tiktok", channel: "tiktok", label: "TikTok", normalize: handle(/^[a-z0-9._]{2,24}$/), url: path1(/^tiktok\.com\/@([A-Za-z0-9._]{2,24})(?:[/?#]|$)/i, /./), profileUrl: (v) => `https://www.tiktok.com/@${v}` },
@@ -203,13 +208,18 @@ export class ChannelRegistry {
     let v = value.trim();
     let sc = (scope ?? "").trim().toLowerCase();
     const viaUrl = k.url?.(bare(v));
-    if (viaUrl) return { kind: k.kind, value: viaUrl.value, scope: viaUrl.scope ?? (k.scoped ? sc : ""), raw: value };
+    if (viaUrl) {
+      const viaScope = viaUrl.scope ?? (k.scoped ? sc : "");
+      if (k.scopePattern && viaScope && !k.scopePattern.test(viaScope)) return null;
+      return { kind: k.kind, value: viaUrl.value, scope: viaScope, raw: value };
+    }
     if (k.scoped && !sc) {
       // "server/user" or "user@server" shorthand
       const slash = v.indexOf("/"), at = v.lastIndexOf("@");
       if (slash > 0) [sc, v] = [v.slice(0, slash).toLowerCase(), v.slice(slash + 1)];
       else if (at > 0) [sc, v] = [v.slice(at + 1).toLowerCase(), v.slice(0, at)];
     }
+    if (k.scopePattern && sc && !k.scopePattern.test(sc)) return null;
     const n = k.normalize(v);
     return n ? { kind: k.kind, value: n, scope: k.scoped ? sc : "", raw: value } : null;
   }
@@ -230,6 +240,41 @@ export class ChannelRegistry {
   display(i: { kind: string; value: string }, reveal: boolean) {
     return this.isPrivateKind(i.kind) && !reveal ? maskPhone(i.value) : i.value;
   }
+
+  /** Canonical outbound URL for an identity, or null when the registry has no URL pattern. */
+  profileUrl(kind: string, value: string, scope = ""): string | null {
+    const k = this.kIdx.get(kind);
+    if (!k?.profileUrl || !value) return null;
+    try {
+      return k.profileUrl(value, scope) || null;
+    } catch {
+      return null;
+    }
+  }
 }
 
 export const BUILTIN_REGISTRY = new ChannelRegistry();
+
+/** Build a profile URL from the channel registry (no hard-coded social URL rules in the UI). */
+export function profileUrl(kind: string, value: string, scope = "", registry: ChannelRegistry = BUILTIN_REGISTRY): string | null {
+  return registry.profileUrl(kind, value, scope);
+}
+
+/** Normalize a website/company domain into a safe outbound https URL. */
+export function websiteUrl(value?: string | null): string | null {
+  const v = value?.trim();
+  if (!v) return null;
+  if (/^https?:\/\//i.test(v)) return v;
+  if (/^mailto:/i.test(v)) return v;
+  return `https://${v.replace(/^\/\//, "")}`;
+}
+
+/** Normalize a stored link, allowing http(s) and mailto; other schemes (javascript:, data:, ...) are rejected. */
+export function externalUrl(value?: string | null): string | null {
+  const v = value?.trim();
+  if (!v) return null;
+  if (/^https?:\/\//i.test(v)) return v;
+  if (/^mailto:[^\s]+$/i.test(v)) return v;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(v)) return null;
+  return `https://${v.replace(/^\/\//, "")}`;
+}

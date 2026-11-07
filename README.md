@@ -6,7 +6,8 @@ Agent-first, multi-tenant outreach CRM on Cloudflare Workers. The primary interf
 ## Stack
 Workers + Hono · Cloudflare `agents` SDK (`createMcpHandler`) + `@modelcontextprotocol/server` v2 ·
 D1 + Drizzle (SQL migrations in `migrations/`) · Better Auth (organization, API key, MCP/OAuth 2.1 + JWT plugins) ·
-Vite + `@cloudflare/vite-plugin` · Vitest + `@cloudflare/vitest-plugin` (runs inside workerd) · Oxlint · TypeScript · bun.
+Vite + `@cloudflare/vite-plugin` · React SPA with shadcn/ui components + Tailwind CSS ·
+Vitest + `@cloudflare/vitest-plugin` (runs inside workerd) · Oxlint · TypeScript · bun.
 
 ## Architecture
 ```
@@ -63,7 +64,7 @@ different input returns `conflict`. The CRM **never sends anything**; it records
 
 | Area | Tools |
 |---|---|
-| Contacts and companies | `search_contacts`, `get_contact`, `upsert_contact`, `upsert_company`, `find_existing`, `list_contacts`, `add_note`, `get_activity` |
+| Contacts and companies | `search_contacts`, `get_contact`, `upsert_contact`, `upsert_company`, `find_existing`, `list_contacts`, `list_contacts_view`, `list_companies`, `add_note`, `get_activity` |
 | Channel state and reminders | `set_channel_state`, `log_touch`, `update_stage`, `due_followups`, `stale_no_response`, `linkedin_needs_first_message`, `list_due_followups`, `create_task`, `complete_task` |
 | Competitors | `is_competitor`, `add_competitor` (`match: exact\|fuzzy`), `update_competitor` (`value` / `match` / `label`), `remove_competitor`, `purge_competitors` (ids / `value_regex`, `dry_run` defaults to true), `list_competitors` |
 | Drafts and campaigns | `create_draft`, `transition_draft`, `list_drafts`, `upsert_campaign`, `list_campaigns` |
@@ -75,6 +76,42 @@ different input returns `conflict`. The CRM **never sends anything**; it records
 | API keys | `create_api_key` (role, default member; secret shown once), `list_api_keys`, `revoke_api_key` |
 
 Also `GET /v1/me`.
+
+### Web UI (`/dashboard`)
+
+The dashboard is a React SPA (shadcn/ui components + Tailwind, built by Vite and served by the Worker's static
+assets binding). Every page is still behind the Better Auth session: `/dashboard/*` runs the same
+`resolveOrgContext` check and redirects anonymous visitors to `/sign-in?next=…`. The UI only calls the REST
+API (`/v1/<tool>`, `/v1/overview`) and never touches D1 directly.
+
+| Page | What it shows |
+|---|---|
+| Overview | Today's follow-ups and tasks, new replies, LinkedIn connections awaiting a first message, pending drafts, X pacing, stale contacts, goal progress and stage counts |
+| Leads | People still prospecting (`new … connected`), with search, stage/channel/source/campaign filters and a column chooser |
+| Contacts | Relationship stages (`responded … paying`) plus a Lost / DNC tab |
+| Pipeline | Kanban board by stage, with links into every lead/contact |
+| Lead / contact detail | Activity timeline, per-channel state, drafts and their states, properties sidebar, linked profiles |
+| Companies | Accounts with domain links and lead/relationship counts |
+| Competitors | Read-only competitor blocklist |
+
+Lead vs contact is derived from the stage (no duplicate lifecycle column): `lead` = new, qualified, drafted,
+contacted, connection_pending, connected; `contact` = responded, call_booked, pilot, paying; `archived` =
+lost, do_not_contact. `list_contacts` accepts an optional `lifecycle` filter and `list_contacts_view` returns
+the split counts plus linked identities. The UI is read-only for viewers; stage changes and draft transitions
+are only shown when the session role has `crm:write`.
+
+Every identity in the UI is an outbound link built from the channel registry (`src/channels.ts`): X, LinkedIn,
+Reddit, GitHub, Threads, email (`mailto:`), Hacker News, Bluesky, Telegram, YouTube and custom channels.
+WhatsApp numbers stay masked and are never linked unless an admin requests private identities.
+
+### Screenshots
+
+| | |
+|---|---|
+| ![Overview](docs/screenshots/overview.png) | ![Leads](docs/screenshots/leads.png) |
+| ![Contacts](docs/screenshots/contacts.png) | ![Pipeline](docs/screenshots/pipeline.png) |
+| ![Contact detail](docs/screenshots/contact-detail.png) | ![Companies](docs/screenshots/companies.png) |
+| ![Competitors](docs/screenshots/competitors.png) | ![Dark mode](docs/screenshots/overview-dark.png) |
 
 **Identities:** email, x_handle, linkedin_url, reddit_user and github are normalized (lowercase, URL and `@`/`u/`
 prefixes stripped) and unique per org. Company domain is unique per org.
@@ -113,7 +150,9 @@ identities, imports, channel states and follow-ups. `list_channels` shows the re
 still come from `set_followup_rules`.
 
 **Stages** (overall and per channel x/linkedin/reddit/email): `new, qualified, drafted, contacted,
-connection_pending, connected, responded, call_booked, pilot, paying, lost, do_not_contact`. Automatic moves are
+connection_pending, connected, responded, call_booked, pilot, paying, lost, do_not_contact`. The dashboard groups
+these into **leads** (through `connected`), **contacts** (`responded` onward) and **archived** (`lost`,
+`do_not_contact`). Automatic moves are
 forward only; `do_not_contact` is sticky. The overall stage is the furthest channel stage. Explicit
 `set_channel_state` / `update_stage` set exactly. **Drafts:** `drafted → approved → sent`, and either one can go to
 `discarded` or back to `drafted` (to edit). Marking `sent` logs the touch, sets the channel to `contacted` and an optional

@@ -5,6 +5,11 @@
   "compatibility_date": "2026-11-01",
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
+  "assets": {
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/", "/dashboard", "/dashboard/*", "/v1/*", "/api/*", "/mcp", "/.well-known/*", "/sign-in", "/consent", "/accept-invite", "/invites/*"]
+  },
   "vars": { "BETTER_AUTH_URL": "https://outreach-crm.daniil-pokrovsky.workers.dev" },
   "d1_databases": [
     {

@@ -1,9 +1,9 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import backfillSql from "../migrations/0008_channel_registry.sql?raw";
-import { BUILTIN_CHANNELS, BUILTIN_REGISTRY as reg, maskPhone, normalizePhone } from "../src/channels";
+import { BUILTIN_CHANNELS, BUILTIN_REGISTRY as reg, maskPhone, normalizePhone, profileUrl } from "../src/channels";
 import { CrmService, parseImportRow } from "../src/service";
-import { contacts } from "../src/db/schema";
+import { contactIdentities, contacts } from "../src/db/schema";
 import { db, makeOrg } from "./helpers";
 
 const p = (raw: string) => {
@@ -90,6 +90,25 @@ describe("contact_identities", () => {
     // record_event resolves by a new identity
     const ev = await svc.record_event({ type: "reply_received", channel: "hackernews", external_id: "hn-item-1", identities: [{ kind: "hn", value: "janeh" }] });
     expect(ev.contact_id).toBe(a.contact.id);
+  });
+
+  it("rejects scopes that could rewrite a scoped profile URL host", async () => {
+    // The slack workspace scope becomes a DNS label in https://<scope>.slack.com/team/<value>.
+    expect(reg.normalize("slack_user", "U12345678", "evil.com/x")).toBeNull();
+    expect(reg.normalize("slack_user", "U12345678", "evil.com")).toBeNull();
+    expect(reg.normalize("slack_user", "U12345678", "evil/x")).toBeNull();
+    expect(profileUrl("slack_user", "U12345678", "evil.com/x")).toBeNull();
+    expect(profileUrl("slack_user", "U12345678", "acme")).toBe("https://acme.slack.com/team/U12345678");
+
+    const { id, svc } = await makeOrg();
+    await expect(svc.upsert_contact({ identities: [{ kind: "slack_user", value: "U12345678", scope: "evil.com/x" }] })).rejects.toThrow(/could not parse/);
+    await expect(svc.find_by_identity({ kind: "slack_user", value: "U12345678", scope: "evil.com/x" })).rejects.toMatchObject({ code: "invalid" });
+
+    // Legacy/imported rows bypass normalize: profileUrl must still refuse to build a hostile host.
+    const { contact } = await svc.upsert_contact({ name: "Legacy Slack" });
+    await db.insert(contactIdentities).values({ orgId: id, contactId: contact.id, kind: "slack_user", valueNormalized: "U12345678", scope: "evil.com/x", raw: "U12345678" });
+    const got = await svc.get_contact({ id: contact.id });
+    expect(got.identities.find((i) => i.kind === "slack_user")).toMatchObject({ scope: "evil.com/x", url: null });
   });
 
   it("import dedupes against table identities, also on dry run within the file", async () => {

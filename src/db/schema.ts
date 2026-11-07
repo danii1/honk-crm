@@ -2,6 +2,9 @@ import { sql } from "drizzle-orm";
 import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { organization } from "./auth-schema";
 import { BUILTIN_CHANNELS, EXTRA_SOURCES } from "../channels";
+import { STAGES, type Stage } from "../lifecycle";
+
+export { STAGES, type Stage };
 
 export * from "./auth-schema";
 
@@ -19,10 +22,6 @@ const updatedAt = () =>
     .notNull()
     .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`);
 
-export const STAGES = [
-  "new", "qualified", "drafted", "contacted", "connection_pending", "connected",
-  "responded", "call_booked", "pilot", "paying", "lost", "do_not_contact",
-] as const;
 /** Channels with per-contact state. */
 /** Built-in channel ids from the registry (src/channels.ts); org custom channels are added at runtime. Not DB enums. */
 export const OUTREACH_CHANNELS: readonly string[] = BUILTIN_CHANNELS.map((c) => c.id);
@@ -36,8 +35,6 @@ export type OutreachChannel = string;
 export type DraftState = (typeof DRAFT_STATES)[number];
 export const DIRECTIONS = ["outbound", "inbound"] as const;
 export const TOUCH_STATUSES = ["draft", "sent", "replied", "bounced"] as const;
-export type Stage = (typeof STAGES)[number];
-
 export const companies = sqliteTable(
   "companies",
   {

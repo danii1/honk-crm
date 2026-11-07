@@ -41,6 +41,26 @@ describe("mark_draft_sent / sync_sent", () => {
     expect(postId("https://x.com/a/status/123?s=20")).toBe("123");
   });
 
+  it("normalizes intent URLs for lookup and idempotency (including mailto)", async () => {
+    const { svc } = await makeOrg();
+    const { contact } = await svc.upsert_contact({ x_handle: "norma" });
+
+    const bare = await svc.create_draft({ contact_id: contact.id, channel: "x", text: "hi", intent_url: "x.com/intent/post?text=hi", idempotency_key: "intent-normalize-1" });
+    expect(bare.intentUrl).toBe("https://x.com/intent/post?text=hi");
+    // Retrying with the normalized URL and the same key must replay, not conflict or create a duplicate.
+    const retry = await svc.create_draft({ contact_id: contact.id, channel: "x", text: "hi", intent_url: "https://x.com/intent/post?text=hi", idempotency_key: "intent-normalize-1" });
+    expect(retry.id).toBe(bare.id);
+    const sent = await svc.mark_draft_sent({ intent_url: "x.com/intent/post?text=hi" });
+    expect(sent).toMatchObject({ status: "sent", matched_by: "intent_url" });
+    expect(sent.draft.id).toBe(bare.id);
+
+    // Email is a first-class channel: mailto intent URLs are valid and round-trip through sync_sent.
+    const mail = await svc.create_draft({ contact_id: contact.id, channel: "email", text: "mail", intent_url: "mailto:mail@acme.dev?subject=hi" });
+    expect(mail.intentUrl).toBe("mailto:mail@acme.dev?subject=hi");
+    const bulk = await svc.sync_sent({ items: [{ intent_url: "mailto:mail@acme.dev?subject=hi" }] });
+    expect(bulk.results[0]).toMatchObject({ ok: true, status: "sent", matched_by: "intent_url" });
+  });
+
   it("refuses ambiguous matches", async () => {
     const { svc } = await makeOrg();
     const { contact } = await svc.upsert_contact({ x_handle: "fred" });
@@ -218,13 +238,21 @@ describe("dashboard + /v1/overview", () => {
     const page = await SELF.fetch("http://localhost/dashboard", { headers: { cookie } });
     expect(page.status).toBe(200);
     const html = await page.text();
-    expect(html).toContain("Follow-ups due");
-    expect(html).toContain("X pacing");
-    const list = await (await SELF.fetch("http://localhost/dashboard/contacts?stage=new", { headers: { cookie } })).text();
-    expect(list).toContain("Olga &lt;script&gt;");
-    expect(list).not.toContain("<script>");
-    const detail = await SELF.fetch(`http://localhost/dashboard/contacts/${contact.id}`, { headers: { cookie } });
-    expect(await detail.text()).toContain("Timeline");
+    // The real built client's JS entry must be served; the asset-less diagnostic is a failure.
+    expect(html).not.toContain("The CRM client is not built");
+    expect(html).toMatch(/<script[^>]+src="\/assets\/index-[^"]+\.js"/);
+    const list = await SELF.fetch("http://localhost/dashboard/leads?stage=new", { headers: { cookie } });
+    expect(list.status).toBe(200);
+    const listHtml = await list.text();
+    expect(listHtml).not.toContain("The CRM client is not built");
+    expect(listHtml).toMatch(/<script[^>]+src="\/assets\/index-[^"]+\.js"/);
+    const detail = await SELF.fetch(`http://localhost/dashboard/leads/${contact.id}`, { headers: { cookie } });
+    expect(detail.status).toBe(200);
     expect((await SELF.fetch("http://localhost/dashboard/contacts/nope", { headers: { cookie } })).status).toBe(404);
+
+    const view = await (await SELF.fetch("http://localhost/v1/list_contacts_view", { method: "POST", headers: { "x-api-key": key.key, "content-type": "application/json" }, body: JSON.stringify({ lifecycle: "lead" }) })).json<{ contacts: { name: string; lifecycle: string; identities: { kind: string; url: string | null }[] }[]; counts: { lead: number; contact: number } }>();
+    expect(view.counts.lead).toBe(1);
+    expect(view.contacts[0]).toMatchObject({ name: "Olga <script>", lifecycle: "lead" });
+    expect(view.contacts[0]!.identities.find((i) => i.kind === "x_handle")?.url).toBe("https://x.com/olga");
   });
 });

@@ -1,16 +1,17 @@
 {
   "compilerOptions": {
     "target": "es2024",
-    "lib": ["es2024"],
+    "lib": ["es2024", "DOM", "DOM.Iterable"],
     "module": "esnext",
     "moduleResolution": "bundler",
-    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-plugin/types", "node"],
+    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-plugin/types", "node", "vite/client"],
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "skipLibCheck": true,
     "noEmit": true,
     "jsx": "react-jsx",
-    "jsxImportSource": "hono/jsx",
+    "jsxImportSource": "react",
+    "paths": { "@/*": ["./src/*"] },
     "isolatedModules": true,
     "verbatimModuleSyntax": false
   },
