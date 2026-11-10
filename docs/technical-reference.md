@@ -158,7 +158,7 @@ forward only; `do_not_contact` is sticky. The overall stage is the furthest chan
 `set_channel_state` / `update_stage` set exactly. **Drafts:** `drafted → approved → sent`, and either one can go to
 `discarded` or back to `drafted` (to edit). Marking `sent` logs the touch, sets the channel to `contacted` and an optional
 follow-up. **Reminders** are the per-channel `next_followup_at`, read through `due_followups` (tz defaults to Asia/Saigon).
-**X pacing:** at least 60 minutes between sends and at most 8 per local day (`x_pacing_today`). **Goal:** 3 paying or 10 pilots by 2026-12-15 (`outreach_report`).
+**X pacing:** the default check uses at least 60 minutes between sends and at most 8 per local day (`x_pacing_today`). **Goals:** admins can set stage targets and an optional deadline with `set_goals`; unconfigured organizations have no goal progress. `outreach_report` and the dashboard show the configured targets.
 Migration 0002 maps v1 stages: replied→responded, meeting→call_booked, won→paying.
 
 ### Competitor matching

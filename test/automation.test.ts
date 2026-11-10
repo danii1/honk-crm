@@ -123,8 +123,8 @@ describe("followup rules, stale, bulk, overview", () => {
     const st = Object.fromEntries((await svc.get_contact({ id: contact.id })).channel_states.map((s) => [s.channel, s]));
     expect(saigonDay(st.x!.nextFollowupAt)).toBe(saigonDay(new Date(Date.parse(t) + 3 * DAY)));
     expect(saigonDay(st.linkedin!.nextFollowupAt)).toBe("2030-01-01"); // explicit wins
-    // email touch logged "now" -> +2d from today
-    expect(saigonDay(st.email!.nextFollowupAt)).toBe(saigonDay(new Date(Date.now() + 2 * DAY)));
+    // The reminder is based on the touch's occurrence time, including backdated touches.
+    expect(saigonDay(st.email!.nextFollowupAt)).toBe(saigonDay(new Date(Date.parse(t) + 2 * DAY)));
     const stale = await svc.stale_no_response({});
     expect(stale.map((s) => [s.channel, s.threshold_days])).toEqual([["x", 1]]);
     expect((await svc.stale_no_response({ days: 0 })).length).toBe(3);
@@ -149,7 +149,7 @@ describe("followup rules, stale, bulk, overview", () => {
     expect(o.tz).toBe("Asia/Saigon");
     expect(o.drafts_pending).toHaveLength(1);
     expect(o.new_replies.map((e) => e.name ?? e.contactId)).toHaveLength(1);
-    expect(o.goal).toMatchObject({ pilots: 1, paying: 0 });
+    expect(o.goal).toBeNull();
     expect(o.stages.pilot).toBe(1);
     expect(o.x_pacing).toHaveProperty("ok_to_send");
   });
@@ -233,7 +233,7 @@ describe("dashboard + /v1/overview", () => {
 
     const ov = await SELF.fetch("http://localhost/v1/overview", { headers: { "x-api-key": key.key } });
     expect(ov.status).toBe(200);
-    expect(await ov.json()).toMatchObject({ tz: "Asia/Saigon", goal: { paying: 0 } });
+    expect(await ov.json()).toMatchObject({ tz: "Asia/Saigon", goal: null });
 
     const page = await SELF.fetch("http://localhost/dashboard", { headers: { cookie } });
     expect(page.status).toBe(200);

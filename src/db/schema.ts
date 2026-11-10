@@ -348,12 +348,13 @@ export const events = sqliteTable(
   ],
 );
 
-/** Per-org settings (follow-up / stale rules). */
+/** Per-org settings. */
 export const orgSettings = sqliteTable("org_settings", {
   orgId: text("org_id")
     .primaryKey()
     .references(() => organization.id, { onDelete: "cascade" }),
   followupRules: text("followup_rules", { mode: "json" }).$type<{ followup_days?: Partial<Record<OutreachChannel, number>>; stale_days?: Partial<Record<OutreachChannel, number>> }>(),
+  goals: text("goals", { mode: "json" }).$type<{ targets: { stage: Stage; count: number }[]; deadline?: string }>(),
   updatedAt: updatedAt(),
 });
 

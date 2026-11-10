@@ -166,7 +166,7 @@ export interface Overview {
   drafts_pending: { id: string; contact_id: string; name?: string | null; lifecycle?: Lifecycle | null; channel: string; state: string; text: string; intent_url?: string | null; created_at?: string | null }[];
   x_pacing: { date: string; drafted_today: number; sent_today: number; remaining_today: number; last_sent_at?: string | null; minutes_since_last_send?: number | null; gap_ok: boolean; cap_ok: boolean; ok_to_send: boolean; next_allowed_at?: string | null };
   stale: { contact_id: string; name?: string | null; lifecycle?: Lifecycle | null; channel: string; stage: string; last_touch_at?: string | null; days_since: number; threshold_days: number }[];
-  goal: { target: string; paying: number; pilots: number; met: boolean; paying_progress_pct: number | null; pilots_progress_pct: number | null; days_left: number };
+  goal: { targets: { stage: string; current: number; target: number; progress_pct: number | null }[]; deadline: string | null; days_left: number | null; met: boolean } | null;
   totals: { leads: number; contacted: number; responded: number; response_rate_pct: number | null; call_booked: number; pilots: number; paying: number };
   stages: Record<string, number>;
 }
@@ -217,7 +217,9 @@ export function api<T>(tool: string, body: Record<string, unknown> = {}) {
 }
 
 export const getMe = () => request<Me>("/v1/me");
-export const getOverview = () => request<Overview>("/v1/overview");
+export const getOverview = (tz: string) => request<Overview>(`/v1/overview?tz=${encodeURIComponent(tz)}`);
+export const getGoals = () => api<{ targets: { stage: string; count: number }[]; deadline?: string }>("get_goals");
+export const setGoals = (goals: { targets: { stage: string; count: number }[]; deadline?: string }) => api<typeof goals>("set_goals", goals);
 export const getPipeline = () => api<PipelineSummary>("pipeline_summary");
 export const listContactsView = (params: Record<string, unknown> = {}) => api<ContactListResponse>("list_contacts_view", params);
 export const getContact = (id: string, includePrivate = false) => api<ContactDetail>("get_contact", { id, ...(includePrivate && { include_private: true }) });

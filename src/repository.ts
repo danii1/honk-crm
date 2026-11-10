@@ -703,6 +703,13 @@ export class Repository {
       .onConflictDoUpdate({ target: s.orgSettings.orgId, set: { followupRules: rules, updatedAt: new Date() } });
     return (await this.getSettings())!;
   }
+  async setGoals(goals: NonNullable<(typeof s.orgSettings.$inferInsert)["goals"]>) {
+    await this.db
+      .insert(s.orgSettings)
+      .values({ orgId: this.orgId, goals })
+      .onConflictDoUpdate({ target: s.orgSettings.orgId, set: { goals, updatedAt: new Date() } });
+    return (await this.getSettings())!;
+  }
   /** Latest occurrence per contact of an event type on a channel. */
   async eventTimes(channel: s.OutreachChannel, type: s.EventType) {
     const e = s.events;
