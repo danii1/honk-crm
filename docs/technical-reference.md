@@ -114,6 +114,12 @@ WhatsApp numbers stay masked and are never linked unless an admin requests priva
 | ![Contact detail](screenshots/contact-detail.png) | ![Companies](screenshots/companies.png) |
 | ![Competitors](screenshots/competitors.png) | ![Dark mode](screenshots/overview-dark.png) |
 
+These images use fictional data. To recreate the isolated local database, run
+`bun scripts/prepare-screenshots.ts --reset`, start `bunx vite --config vite.screenshots.config.ts`,
+then run `bun scripts/seed-screenshots.ts` in another terminal. The fixture creates 14 contacts,
+six companies, and example activity. Its temporary login is saved under `.wrangler/screenshot-config/`
+(ignored by Git). Capture the pages at `http://localhost:5174/dashboard`.
+
 **Identities:** email, x_handle, linkedin_url, reddit_user and github are normalized (lowercase, URL and `@`/`u/`
 prefixes stripped) and unique per org. Company domain is unique per org.
 ## Channels
