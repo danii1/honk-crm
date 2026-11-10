@@ -96,7 +96,7 @@ app.post("/v1/:tool", async (c) => {
 });
 
 // ---- React SPA (shadcn/ui) served after the same Better Auth session check
-const SPA_FALLBACK = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Outreach CRM</title></head><body><div id="root"></div><p style="font:14px system-ui;padding:24px">The CRM client is not built. Run <code>bun run build</code> and reload.</p></body></html>`;
+const SPA_FALLBACK = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Honk</title></head><body><div id="root"></div><p style="font:14px system-ui;padding:24px">The CRM client is not built. Run <code>bun run build</code> and reload.</p></body></html>`;
 
 const dashAuth = createMiddleware<{ Bindings: Env; Variables: Vars }>(async (c, next) => {
   try {

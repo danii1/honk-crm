@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite dev",
+    "dev": "wrangler d1 migrations apply DB --local && vite dev",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint src test",

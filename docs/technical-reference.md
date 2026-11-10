@@ -203,8 +203,7 @@ requests.post(f"{BASE}/v1/list_competitors", json={}, headers={"Authorization": 
 ```bash
 bun install
 cp .dev.vars.example .dev.vars          # set BETTER_AUTH_SECRET (≥32 random chars)
-bun run db:migrate:local                # applies migrations to local D1 (.wrangler/state)
-bun run dev                             # http://localhost:5173
+bun run dev                             # applies local D1 migrations, then starts http://localhost:5173
 ```
 Create a user + org + org API key (prints the key once):
 ```bash

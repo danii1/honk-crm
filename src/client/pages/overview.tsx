@@ -332,7 +332,7 @@ function GoalRow({ label, value, goal, progressPct }: { label: string; value: nu
         <span className="tabular-nums text-muted-foreground">{value} / {goal}</span>
       </div>
       <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-muted">
-        <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.max(0, Math.min(100, progress))}%` }} />
+        <div className="h-full rounded-full bg-success" style={{ width: `${Math.max(0, Math.min(100, progress))}%` }} />
       </div>
     </div>
   );

@@ -24,7 +24,7 @@ export function StatCard({
         <div className="flex items-start justify-between gap-2">
           <p className="text-xs font-medium text-muted-foreground">{label}</p>
           {Icon ? (
-            <span className={cn("rounded-md p-1.5", tone === "good" ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300" : tone === "warn" ? "bg-amber-500/12 text-amber-600 dark:text-amber-300" : tone === "bad" ? "bg-destructive/10 text-destructive" : "bg-muted text-muted-foreground")}>
+            <span className={cn("rounded-md p-1.5", tone === "good" ? "bg-success-soft text-success" : tone === "warn" ? "bg-warning-soft text-warning" : tone === "bad" ? "bg-destructive/10 text-destructive" : "bg-muted text-muted-foreground")}>
               <Icon className="size-3.5" />
             </span>
           ) : null}

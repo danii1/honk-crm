@@ -67,9 +67,9 @@ function NavItems({ onNavigate }: { onNavigate?: () => void }) {
 function Brand() {
   return (
     <div className="flex items-center gap-2 px-1">
-      <span className="flex size-8 items-center justify-center rounded-lg bg-primary text-sm font-bold text-primary-foreground">O</span>
+      <img src="/honk-goose.png" alt="" className="size-9 shrink-0 rounded-full object-cover" />
       <div className="leading-tight">
-        <p className="text-sm font-semibold">Outreach CRM</p>
+        <p className="text-sm font-semibold">Honk</p>
         <p className="text-[10px] text-muted-foreground">Sales workspace</p>
       </div>
     </div>
@@ -115,7 +115,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </DialogContent>
           </Dialog>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold md:hidden">Outreach CRM</p>
+            <p className="truncate text-sm font-semibold md:hidden">Honk</p>
             <p className="hidden text-xs text-muted-foreground md:block">
               {me.role === "viewer" ? "Read-only access" : "You can edit leads, stages and drafts"}
             </p>

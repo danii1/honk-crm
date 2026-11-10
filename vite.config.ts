@@ -6,5 +6,6 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), cloudflare({ viteEnvironment: { name: "worker" } })],
+  server: { port: 5173, strictPort: true },
   resolve: { alias: { "@": path.resolve(import.meta.dirname, "src") } },
 });
