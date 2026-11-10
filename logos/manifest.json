@@ -1,0 +1,915 @@
+[
+  {
+    "file": "individual-crops/goose-crm-hunt-icon-grid/goose-crm-hunt-icon-grid-r01-c01.png",
+    "source": "Goose CRM Hunt Icon Grid.png",
+    "crop_box": [
+      27,
+      38,
+      416,
+      421
+    ],
+    "padding": 23
+  },
+  {
+    "file": "individual-crops/goose-crm-hunt-icon-grid/goose-crm-hunt-icon-grid-r01-c02.png",
+    "source": "Goose CRM Hunt Icon Grid.png",
+    "crop_box": [
+      432,
+      35,
+      816,
+      422
+    ],
+    "padding": 23
+  },
+  {
+    "file": "individual-crops/goose-crm-hunt-icon-grid/goose-crm-hunt-icon-grid-r01-c03.png",
+    "source": "Goose CRM Hunt Icon Grid.png",
+    "crop_box": [
+      827,
+      34,
+      1225,
+      421
+    ],
+    "padding": 24
+  },
+  {
+    "file": "individual-crops/goose-crm-hunt-icon-grid/goose-crm-hunt-icon-grid-r02-c01.png",
+    "source": "Goose CRM Hunt Icon Grid.png",
+    "crop_box": [
+      27,
+      439,
+      416,
+      816
+    ],
+    "padding": 23
+  },
+  {
+    "file": "individual-crops/goose-crm-hunt-icon-grid/goose-crm-hunt-icon-grid-r02-c02.png",
+    "source": "Goose CRM Hunt Icon Grid.png",
+    "crop_box": [
+      432,
+      442,
+      811,
+      816
+    ],
+    "padding": 23
+  },
+  {
+    "file": "individual-crops/goose-crm-hunt-icon-grid/goose-crm-hunt-icon-grid-r02-c03.png",
+    "source": "Goose CRM Hunt Icon Grid.png",
+    "crop_box": [
+      826,
+      441,
+      1224,
+      817
+    ],
+    "padding": 24
+  },
+  {
+    "file": "individual-crops/goose-crm-hunt-icon-grid/goose-crm-hunt-icon-grid-r03-c01.png",
+    "source": "Goose CRM Hunt Icon Grid.png",
+    "crop_box": [
+      24,
+      835,
+      421,
+      1228
+    ],
+    "padding": 24
+  },
+  {
+    "file": "individual-crops/goose-crm-hunt-icon-grid/goose-crm-hunt-icon-grid-r03-c02.png",
+    "source": "Goose CRM Hunt Icon Grid.png",
+    "crop_box": [
+      433,
+      839,
+      796,
+      1218
+    ],
+    "padding": 23
+  },
+  {
+    "file": "individual-crops/goose-crm-hunt-icon-grid/goose-crm-hunt-icon-grid-r03-c03.png",
+    "source": "Goose CRM Hunt Icon Grid.png",
+    "crop_box": [
+      812,
+      838,
+      1235,
+      1233
+    ],
+    "padding": 25
+  },
+  {
+    "file": "individual-crops/honk-goose-crm-logo-variations/honk-goose-crm-logo-variations-r01-c01.png",
+    "source": "Honk Goose CRM Logo Variations.png",
+    "crop_box": [
+      58,
+      54,
+      500,
+      503
+    ],
+    "padding": 27
+  },
+  {
+    "file": "individual-crops/honk-goose-crm-logo-variations/honk-goose-crm-logo-variations-r01-c02.png",
+    "source": "Honk Goose CRM Logo Variations.png",
+    "crop_box": [
+      542,
+      54,
+      982,
+      504
+    ],
+    "padding": 27
+  },
+  {
+    "file": "individual-crops/honk-goose-crm-logo-variations/honk-goose-crm-logo-variations-r01-c03.png",
+    "source": "Honk Goose CRM Logo Variations.png",
+    "crop_box": [
+      1025,
+      52,
+      1471,
+      504
+    ],
+    "padding": 27
+  },
+  {
+    "file": "individual-crops/honk-goose-crm-logo-variations/honk-goose-crm-logo-variations-r02-c01.png",
+    "source": "Honk Goose CRM Logo Variations.png",
+    "crop_box": [
+      58,
+      547,
+      500,
+      995
+    ],
+    "padding": 27
+  },
+  {
+    "file": "individual-crops/honk-goose-crm-logo-variations/honk-goose-crm-logo-variations-r02-c02.png",
+    "source": "Honk Goose CRM Logo Variations.png",
+    "crop_box": [
+      542,
+      547,
+      982,
+      994
+    ],
+    "padding": 27
+  },
+  {
+    "file": "individual-crops/honk-goose-crm-logo-variations/honk-goose-crm-logo-variations-r02-c03.png",
+    "source": "Honk Goose CRM Logo Variations.png",
+    "crop_box": [
+      1024,
+      543,
+      1470,
+      995
+    ],
+    "padding": 27
+  },
+  {
+    "file": "individual-crops/honk-goose-logo-icon-collection/honk-goose-logo-icon-collection-r01-c01.png",
+    "source": "Honk Goose Logo Icon Collection.png",
+    "crop_box": [
+      53,
+      22,
+      389,
+      359
+    ],
+    "padding": 20
+  },
+  {
+    "file": "individual-crops/honk-goose-logo-icon-collection/honk-goose-logo-icon-collection-r01-c02.png",
+    "source": "Honk Goose Logo Icon Collection.png",
+    "crop_box": [
+      416,
+      23,
+      753,
+      359
+    ],
+    "padding": 20
+  },
+  {
+    "file": "individual-crops/honk-goose-logo-icon-collection/honk-goose-logo-icon-collection-r01-c03.png",
+    "source": "Honk Goose Logo Icon Collection.png",
+    "crop_box": [
+      781,
+      20,
+      1120,
+      359
+    ],
+    "padding": 20
+  },
+  {
+    "file": "individual-crops/honk-goose-logo-icon-collection/honk-goose-logo-icon-collection-r01-c04.png",
+    "source": "Honk Goose Logo Icon Collection.png",
+    "crop_box": [
+      1147,
+      23,
+      1486,
+      359
+    ],
+    "padding": 20
+  },
+  {
+    "file": "individual-crops/honk-goose-logo-icon-collection/honk-goose-logo-icon-collection-r02-c01.png",
+    "source": "Honk Goose Logo Icon Collection.png",
+    "crop_box": [
+      53,
+      376,
+      384,
+      702
+    ],
+    "padding": 20
+  },
+  {
+    "file": "individual-crops/honk-goose-logo-icon-collection/honk-goose-logo-icon-collection-r02-c02.png",
+    "source": "Honk Goose Logo Icon Collection.png",
+    "crop_box": [
+      418,
+      379,
+      750,
+      703
+    ],
+    "padding": 20
+  },
+  {
+    "file": "individual-crops/honk-goose-logo-icon-collection/honk-goose-logo-icon-collection-r02-c03.png",
+    "source": "Honk Goose Logo Icon Collection.png",
+    "crop_box": [
+      781,
+      380,
+      1112,
+      703
+    ],
+    "padding": 20
+  },
+  {
+    "file": "individual-crops/honk-goose-logo-icon-collection/honk-goose-logo-icon-collection-r02-c04.png",
+    "source": "Honk Goose Logo Icon Collection.png",
+    "crop_box": [
+      1147,
+      376,
+      1486,
+      704
+    ],
+    "padding": 20
+  },
+  {
+    "file": "individual-crops/honk-goose-logo-icon-collection/honk-goose-logo-icon-collection-r03-c01.png",
+    "source": "Honk Goose Logo Icon Collection.png",
+    "crop_box": [
+      61,
+      723,
+      370,
+      1024
+    ],
+    "padding": 19
+  },
+  {
+    "file": "individual-crops/honk-goose-logo-icon-collection/honk-goose-logo-icon-collection-r03-c02.png",
+    "source": "Honk Goose Logo Icon Collection.png",
+    "crop_box": [
+      424,
+      722,
+      739,
+      1024
+    ],
+    "padding": 19
+  },
+  {
+    "file": "individual-crops/honk-goose-logo-icon-collection/honk-goose-logo-icon-collection-r03-c03.png",
+    "source": "Honk Goose Logo Icon Collection.png",
+    "crop_box": [
+      790,
+      723,
+      1098,
+      1022
+    ],
+    "padding": 18
+  },
+  {
+    "file": "individual-crops/honk-goose-logo-icon-collection/honk-goose-logo-icon-collection-r03-c04.png",
+    "source": "Honk Goose Logo Icon Collection.png",
+    "crop_box": [
+      1150,
+      723,
+      1468,
+      1022
+    ],
+    "padding": 19
+  },
+  {
+    "file": "individual-crops/honk-goose-mascot-logo-collection/honk-goose-mascot-logo-collection-r01-c01.png",
+    "source": "Honk Goose Mascot Logo Collection.png",
+    "crop_box": [
+      34,
+      20,
+      277,
+      266
+    ],
+    "padding": 15
+  },
+  {
+    "file": "individual-crops/honk-goose-mascot-logo-collection/honk-goose-mascot-logo-collection-r01-c02.png",
+    "source": "Honk Goose Mascot Logo Collection.png",
+    "crop_box": [
+      285,
+      20,
+      520,
+      264
+    ],
+    "padding": 15
+  },
+  {
+    "file": "individual-crops/honk-goose-mascot-logo-collection/honk-goose-mascot-logo-collection-r01-c03.png",
+    "source": "Honk Goose Mascot Logo Collection.png",
+    "crop_box": [
+      526,
+      23,
+      765,
+      264
+    ],
+    "padding": 14
+  },
+  {
+    "file": "individual-crops/honk-goose-mascot-logo-collection/honk-goose-mascot-logo-collection-r01-c04.png",
+    "source": "Honk Goose Mascot Logo Collection.png",
+    "crop_box": [
+      773,
+      24,
+      1006,
+      266
+    ],
+    "padding": 15
+  },
+  {
+    "file": "individual-crops/honk-goose-mascot-logo-collection/honk-goose-mascot-logo-collection-r01-c05.png",
+    "source": "Honk Goose Mascot Logo Collection.png",
+    "crop_box": [
+      1013,
+      20,
+      1255,
+      266
+    ],
+    "padding": 15
+  },
+  {
+    "file": "individual-crops/honk-goose-mascot-logo-collection/honk-goose-mascot-logo-collection-r01-c06.png",
+    "source": "Honk Goose Mascot Logo Collection.png",
+    "crop_box": [
+      1259,
+      20,
+      1501,
+      264
+    ],
+    "padding": 15
+  },
+  {
+    "file": "individual-crops/honk-goose-mascot-logo-collection/honk-goose-mascot-logo-collection-r02-c01.png",
+    "source": "Honk Goose Mascot Logo Collection.png",
+    "crop_box": [
+      35,
+      278,
+      273,
+      515
+    ],
+    "padding": 14
+  },
+  {
+    "file": "individual-crops/honk-goose-mascot-logo-collection/honk-goose-mascot-logo-collection-r02-c02.png",
+    "source": "Honk Goose Mascot Logo Collection.png",
+    "crop_box": [
+      285,
+      281,
+      519,
+      516
+    ],
+    "padding": 14
+  },
+  {
+    "file": "individual-crops/honk-goose-mascot-logo-collection/honk-goose-mascot-logo-collection-r02-c03.png",
+    "source": "Honk Goose Mascot Logo Collection.png",
+    "crop_box": [
+      526,
+      279,
+      763,
+      516
+    ],
+    "padding": 14
+  },
+  {
+    "file": "individual-crops/honk-goose-mascot-logo-collection/honk-goose-mascot-logo-collection-r02-c04.png",
+    "source": "Honk Goose Mascot Logo Collection.png",
+    "crop_box": [
+      772,
+      281,
+      1006,
+      516
+    ],
+    "padding": 14
+  },
+  {
+    "file": "individual-crops/honk-goose-mascot-logo-collection/honk-goose-mascot-logo-collection-r02-c05.png",
+    "source": "Honk Goose Mascot Logo Collection.png",
+    "crop_box": [
+      1012,
+      281,
+      1249,
+      516
+    ],
+    "padding": 14
+  },
+  {
+    "file": "individual-crops/honk-goose-mascot-logo-collection/honk-goose-mascot-logo-collection-r02-c06.png",
+    "source": "Honk Goose Mascot Logo Collection.png",
+    "crop_box": [
+      1261,
+      278,
+      1501,
+      517
+    ],
+    "padding": 14
+  },
+  {
+    "file": "individual-crops/honk-goose-mascot-logo-collection/honk-goose-mascot-logo-collection-r03-c01.png",
+    "source": "Honk Goose Mascot Logo Collection.png",
+    "crop_box": [
+      34,
+      527,
+      273,
+      761
+    ],
+    "padding": 14
+  },
+  {
+    "file": "individual-crops/honk-goose-mascot-logo-collection/honk-goose-mascot-logo-collection-r03-c02.png",
+    "source": "Honk Goose Mascot Logo Collection.png",
+    "crop_box": [
+      283,
+      531,
+      518,
+      764
+    ],
+    "padding": 14
+  },
+  {
+    "file": "individual-crops/honk-goose-mascot-logo-collection/honk-goose-mascot-logo-collection-r03-c03.png",
+    "source": "Honk Goose Mascot Logo Collection.png",
+    "crop_box": [
+      529,
+      531,
+      763,
+      766
+    ],
+    "padding": 14
+  },
+  {
+    "file": "individual-crops/honk-goose-mascot-logo-collection/honk-goose-mascot-logo-collection-r03-c04.png",
+    "source": "Honk Goose Mascot Logo Collection.png",
+    "crop_box": [
+      766,
+      530,
+      1009,
+      765
+    ],
+    "padding": 15
+  },
+  {
+    "file": "individual-crops/honk-goose-mascot-logo-collection/honk-goose-mascot-logo-collection-r03-c05.png",
+    "source": "Honk Goose Mascot Logo Collection.png",
+    "crop_box": [
+      1013,
+      531,
+      1253,
+      763
+    ],
+    "padding": 14
+  },
+  {
+    "file": "individual-crops/honk-goose-mascot-logo-collection/honk-goose-mascot-logo-collection-r03-c06.png",
+    "source": "Honk Goose Mascot Logo Collection.png",
+    "crop_box": [
+      1262,
+      529,
+      1501,
+      765
+    ],
+    "padding": 14
+  },
+  {
+    "file": "individual-crops/honk-goose-mascot-logo-collection/honk-goose-mascot-logo-collection-r04-c01.png",
+    "source": "Honk Goose Mascot Logo Collection.png",
+    "crop_box": [
+      33,
+      774,
+      272,
+      1011
+    ],
+    "padding": 14
+  },
+  {
+    "file": "individual-crops/honk-goose-mascot-logo-collection/honk-goose-mascot-logo-collection-r04-c02.png",
+    "source": "Honk Goose Mascot Logo Collection.png",
+    "crop_box": [
+      284,
+      777,
+      512,
+      1009
+    ],
+    "padding": 14
+  },
+  {
+    "file": "individual-crops/honk-goose-mascot-logo-collection/honk-goose-mascot-logo-collection-r04-c03.png",
+    "source": "Honk Goose Mascot Logo Collection.png",
+    "crop_box": [
+      523,
+      778,
+      755,
+      1009
+    ],
+    "padding": 14
+  },
+  {
+    "file": "individual-crops/honk-goose-mascot-logo-collection/honk-goose-mascot-logo-collection-r04-c04.png",
+    "source": "Honk Goose Mascot Logo Collection.png",
+    "crop_box": [
+      772,
+      778,
+      1006,
+      1010
+    ],
+    "padding": 14
+  },
+  {
+    "file": "individual-crops/honk-goose-mascot-logo-collection/honk-goose-mascot-logo-collection-r04-c05.png",
+    "source": "Honk Goose Mascot Logo Collection.png",
+    "crop_box": [
+      1018,
+      775,
+      1256,
+      1013
+    ],
+    "padding": 14
+  },
+  {
+    "file": "individual-crops/honk-goose-mascot-logo-collection/honk-goose-mascot-logo-collection-r04-c06.png",
+    "source": "Honk Goose Mascot Logo Collection.png",
+    "crop_box": [
+      1264,
+      777,
+      1501,
+      1013
+    ],
+    "padding": 14
+  },
+  {
+    "file": "individual-crops/ocean-honk-business-icons/ocean-honk-business-icons-r01-c01.png",
+    "source": "Ocean Honk Business Icons.png",
+    "crop_box": [
+      29,
+      24,
+      315,
+      302
+    ],
+    "padding": 17
+  },
+  {
+    "file": "individual-crops/ocean-honk-business-icons/ocean-honk-business-icons-r01-c02.png",
+    "source": "Ocean Honk Business Icons.png",
+    "crop_box": [
+      334,
+      24,
+      615,
+      301
+    ],
+    "padding": 17
+  },
+  {
+    "file": "individual-crops/ocean-honk-business-icons/ocean-honk-business-icons-r01-c03.png",
+    "source": "Ocean Honk Business Icons.png",
+    "crop_box": [
+      637,
+      24,
+      920,
+      302
+    ],
+    "padding": 17
+  },
+  {
+    "file": "individual-crops/ocean-honk-business-icons/ocean-honk-business-icons-r01-c04.png",
+    "source": "Ocean Honk Business Icons.png",
+    "crop_box": [
+      938,
+      23,
+      1225,
+      301
+    ],
+    "padding": 17
+  },
+  {
+    "file": "individual-crops/ocean-honk-business-icons/ocean-honk-business-icons-r02-c01.png",
+    "source": "Ocean Honk Business Icons.png",
+    "crop_box": [
+      30,
+      331,
+      315,
+      612
+    ],
+    "padding": 17
+  },
+  {
+    "file": "individual-crops/ocean-honk-business-icons/ocean-honk-business-icons-r02-c02.png",
+    "source": "Ocean Honk Business Icons.png",
+    "crop_box": [
+      335,
+      331,
+      615,
+      611
+    ],
+    "padding": 17
+  },
+  {
+    "file": "individual-crops/ocean-honk-business-icons/ocean-honk-business-icons-r02-c03.png",
+    "source": "Ocean Honk Business Icons.png",
+    "crop_box": [
+      636,
+      330,
+      920,
+      611
+    ],
+    "padding": 17
+  },
+  {
+    "file": "individual-crops/ocean-honk-business-icons/ocean-honk-business-icons-r02-c04.png",
+    "source": "Ocean Honk Business Icons.png",
+    "crop_box": [
+      941,
+      330,
+      1227,
+      612
+    ],
+    "padding": 17
+  },
+  {
+    "file": "individual-crops/ocean-honk-business-icons/ocean-honk-business-icons-r03-c01.png",
+    "source": "Ocean Honk Business Icons.png",
+    "crop_box": [
+      32,
+      639,
+      317,
+      916
+    ],
+    "padding": 17
+  },
+  {
+    "file": "individual-crops/ocean-honk-business-icons/ocean-honk-business-icons-r03-c02.png",
+    "source": "Ocean Honk Business Icons.png",
+    "crop_box": [
+      337,
+      640,
+      613,
+      915
+    ],
+    "padding": 17
+  },
+  {
+    "file": "individual-crops/ocean-honk-business-icons/ocean-honk-business-icons-r03-c03.png",
+    "source": "Ocean Honk Business Icons.png",
+    "crop_box": [
+      639,
+      640,
+      920,
+      916
+    ],
+    "padding": 17
+  },
+  {
+    "file": "individual-crops/ocean-honk-business-icons/ocean-honk-business-icons-r03-c04.png",
+    "source": "Ocean Honk Business Icons.png",
+    "crop_box": [
+      941,
+      639,
+      1227,
+      917
+    ],
+    "padding": 17
+  },
+  {
+    "file": "individual-crops/ocean-honk-business-icons/ocean-honk-business-icons-r04-c01.png",
+    "source": "Ocean Honk Business Icons.png",
+    "crop_box": [
+      30,
+      945,
+      316,
+      1223
+    ],
+    "padding": 17
+  },
+  {
+    "file": "individual-crops/ocean-honk-business-icons/ocean-honk-business-icons-r04-c02.png",
+    "source": "Ocean Honk Business Icons.png",
+    "crop_box": [
+      338,
+      946,
+      619,
+      1225
+    ],
+    "padding": 17
+  },
+  {
+    "file": "individual-crops/ocean-honk-business-icons/ocean-honk-business-icons-r04-c03.png",
+    "source": "Ocean Honk Business Icons.png",
+    "crop_box": [
+      642,
+      948,
+      922,
+      1223
+    ],
+    "padding": 17
+  },
+  {
+    "file": "individual-crops/ocean-honk-business-icons/ocean-honk-business-icons-r04-c04.png",
+    "source": "Ocean Honk Business Icons.png",
+    "crop_box": [
+      942,
+      945,
+      1227,
+      1223
+    ],
+    "padding": 17
+  },
+  {
+    "file": "individual-crops/pixel-goose-crm-icon-grid/pixel-goose-crm-icon-grid-r01-c01.png",
+    "source": "Pixel Goose CRM Icon Grid.png",
+    "crop_box": [
+      198,
+      24,
+      453,
+      260
+    ],
+    "padding": 15
+  },
+  {
+    "file": "individual-crops/pixel-goose-crm-icon-grid/pixel-goose-crm-icon-grid-r01-c02.png",
+    "source": "Pixel Goose CRM Icon Grid.png",
+    "crop_box": [
+      492,
+      26,
+      747,
+      262
+    ],
+    "padding": 15
+  },
+  {
+    "file": "individual-crops/pixel-goose-crm-icon-grid/pixel-goose-crm-icon-grid-r01-c03.png",
+    "source": "Pixel Goose CRM Icon Grid.png",
+    "crop_box": [
+      786,
+      26,
+      1043,
+      261
+    ],
+    "padding": 15
+  },
+  {
+    "file": "individual-crops/pixel-goose-crm-icon-grid/pixel-goose-crm-icon-grid-r01-c04.png",
+    "source": "Pixel Goose CRM Icon Grid.png",
+    "crop_box": [
+      1083,
+      24,
+      1338,
+      261
+    ],
+    "padding": 15
+  },
+  {
+    "file": "individual-crops/pixel-goose-crm-icon-grid/pixel-goose-crm-icon-grid-r02-c01.png",
+    "source": "Pixel Goose CRM Icon Grid.png",
+    "crop_box": [
+      193,
+      279,
+      451,
+      510
+    ],
+    "padding": 15
+  },
+  {
+    "file": "individual-crops/pixel-goose-crm-icon-grid/pixel-goose-crm-icon-grid-r02-c02.png",
+    "source": "Pixel Goose CRM Icon Grid.png",
+    "crop_box": [
+      490,
+      279,
+      741,
+      510
+    ],
+    "padding": 15
+  },
+  {
+    "file": "individual-crops/pixel-goose-crm-icon-grid/pixel-goose-crm-icon-grid-r02-c03.png",
+    "source": "Pixel Goose CRM Icon Grid.png",
+    "crop_box": [
+      782,
+      278,
+      1043,
+      512
+    ],
+    "padding": 16
+  },
+  {
+    "file": "individual-crops/pixel-goose-crm-icon-grid/pixel-goose-crm-icon-grid-r02-c04.png",
+    "source": "Pixel Goose CRM Icon Grid.png",
+    "crop_box": [
+      1083,
+      279,
+      1342,
+      510
+    ],
+    "padding": 16
+  },
+  {
+    "file": "individual-crops/pixel-goose-crm-icon-grid/pixel-goose-crm-icon-grid-r03-c01.png",
+    "source": "Pixel Goose CRM Icon Grid.png",
+    "crop_box": [
+      186,
+      528,
+      448,
+      755
+    ],
+    "padding": 16
+  },
+  {
+    "file": "individual-crops/pixel-goose-crm-icon-grid/pixel-goose-crm-icon-grid-r03-c02.png",
+    "source": "Pixel Goose CRM Icon Grid.png",
+    "crop_box": [
+      485,
+      527,
+      745,
+      754
+    ],
+    "padding": 16
+  },
+  {
+    "file": "individual-crops/pixel-goose-crm-icon-grid/pixel-goose-crm-icon-grid-r03-c03.png",
+    "source": "Pixel Goose CRM Icon Grid.png",
+    "crop_box": [
+      782,
+      531,
+      1043,
+      755
+    ],
+    "padding": 16
+  },
+  {
+    "file": "individual-crops/pixel-goose-crm-icon-grid/pixel-goose-crm-icon-grid-r03-c04.png",
+    "source": "Pixel Goose CRM Icon Grid.png",
+    "crop_box": [
+      1084,
+      528,
+      1347,
+      754
+    ],
+    "padding": 16
+  },
+  {
+    "file": "individual-crops/pixel-goose-crm-icon-grid/pixel-goose-crm-icon-grid-r04-c01.png",
+    "source": "Pixel Goose CRM Icon Grid.png",
+    "crop_box": [
+      181,
+      773,
+      440,
+      1003
+    ],
+    "padding": 16
+  },
+  {
+    "file": "individual-crops/pixel-goose-crm-icon-grid/pixel-goose-crm-icon-grid-r04-c02.png",
+    "source": "Pixel Goose CRM Icon Grid.png",
+    "crop_box": [
+      476,
+      773,
+      742,
+      1002
+    ],
+    "padding": 16
+  },
+  {
+    "file": "individual-crops/pixel-goose-crm-icon-grid/pixel-goose-crm-icon-grid-r04-c03.png",
+    "source": "Pixel Goose CRM Icon Grid.png",
+    "crop_box": [
+      778,
+      772,
+      1049,
+      1005
+    ],
+    "padding": 16
+  },
+  {
+    "file": "individual-crops/pixel-goose-crm-icon-grid/pixel-goose-crm-icon-grid-r04-c04.png",
+    "source": "Pixel Goose CRM Icon Grid.png",
+    "crop_box": [
+      1087,
+      771,
+      1354,
+      1005
+    ],
+    "padding": 16
+  }
+]

@@ -1,41 +1,53 @@
-# Outreach CRM
+<p align="center">
+  <img src="docs/honk-logo.png" alt="Honk's business goose, floating through the sales pipeline" width="200" />
+</p>
 
-**An agent-first CRM for outreach across channels.** Give an AI agent a shared place to find prospects, keep records up to date, track conversations, and plan follow-ups. The work stays visible to your team in a web dashboard.
+# Honk
 
-The agent works through connected tools, while people review drafts, watch the pipeline, and step in where judgment is needed. Outreach CRM records what was sent; it does not send messages itself.
+**A small CRM with big goose energy.**
 
-![Outreach CRM overview showing today’s work](docs/screenshots/overview.png)
+You have prospects. You have tabs. Somewhere, you have a very important follow-up you were absolutely going to remember.
 
-## What you can do
+Honk gives your team and your AI agent one place to keep leads, conversations, drafts, and next steps. The agent tends the records. You steer the relationships. A goose supervises, despite having no relevant qualifications.
 
-- **See what needs attention today.** Find due follow-ups, new replies, pending drafts, stale conversations, and outreach progress in one overview.
-- **Keep one record per person.** Bring together profiles, company details, notes, channel activity, and conversation history. The CRM matches existing people and companies when new leads are imported.
-- **Move leads through the pipeline.** Track prospects from new lead to paying customer, with a clear view of each stage and the next step.
-- **Work across channels.** Track outreach on X, LinkedIn, Reddit, email, and other social or community channels. Add custom channels for your team's workflow.
-- **Review outreach before it happens.** Keep message drafts, approval states, and follow-up reminders alongside the contact.
-- **Coordinate a team and an agent.** Invite teammates, choose their access level, and give agents their own credentials. Activity history shows who changed a record and why.
+The agent is Honk's primary user; humans get a dashboard to review the work and step in when needed.
 
-## A typical day
+![Honk overview showing today’s work](docs/screenshots/overview.png)
 
-1. The agent finds or imports leads, checks for existing records, and keeps each person's history together.
-2. As outreach happens, the agent records touches and replies, moves stages forward, and sets follow-up reminders.
-3. Open **Today** to review new replies, work due, and drafts waiting for approval. Open a lead to see its full history.
-4. Check the **Pipeline** to see which relationships are moving toward a pilot or customer.
+## Get your ducks in a row. Hire a goose.
+
+- **A morning briefing for your flock.** Due follow-ups, new replies, pending drafts, and stale conversations gather in **Today**. Coffee remains your responsibility.
+- **One person, one record, fewer mysteries.** Keep profiles, companies, notes, and conversation history together. Imported leads are matched against existing people and companies, because three copies of the same prospect do not count as pipeline growth.
+- **A pipeline with somewhere to go.** Move leads from first hello toward a pilot or paying customer. Give every promising conversation a next step before it wanders into the reeds.
+- **Many channels. One nest.** Track outreach on X, LinkedIn, Reddit, email, and other social or community channels. Add custom channels when your flock takes an unusual route.
+- **Drafts before dramatic entrances.** Review messages, approval states, and follow-up reminders alongside each contact. The goose may be impulsive. Your workflow needn't be.
+- **Room for the whole gaggle.** Invite teammates, set access levels, and give agents their own credentials. Activity history keeps track of who changed what and why. “The goose did it” is now a testable claim.
+
+Honk records outreach; your agent uses connected tools to actually send it. Keep that distinction in mind before asking the dashboard to honk at someone.
+
+## A day at the pond
+
+1. Your agent finds or imports prospects and checks whether they're already in the nest.
+2. As conversations happen, it records touches and replies, updates stages, and sets follow-ups.
+3. You open **Today**, review drafts and replies, and decide who needs a thoughtful hello.
+4. You check **Pipeline** to see what's moving. The goose checks for bread. Different metrics.
 
 | Leads and contacts | Pipeline |
 |---|---|
 | ![Leads view](docs/screenshots/leads.png) | ![Pipeline board](docs/screenshots/pipeline.png) |
 
-## Explore the workspace
+## Take a gander
 
-The web dashboard has views for **Today**, **Leads**, **Contacts**, **Pipeline**, **Companies**, and **Competitors**. Each person has a detail page with their activity, channel states, drafts, and linked profiles. A mobile layout and dark mode are available too.
+The dashboard includes **Today**, **Leads**, **Contacts**, **Pipeline**, **Companies**, and **Competitors**. Each person has a detail page with activity, channel states, drafts, and linked profiles. There's a mobile layout for pondside operations and dark mode for nocturnal honking.
 
 | Contact detail | Mobile overview |
 |---|---|
 | ![Contact detail](docs/screenshots/contact-detail.png) | ![Mobile overview](docs/screenshots/overview-mobile.png) |
 
-## Getting started
+## Build your nest
 
-This project is self-hosted. To run it locally, create your first organization, connect an agent, or deploy your own instance, follow the [setup and technical reference](docs/technical-reference.md#local-dev). The reference also covers [agent connections](docs/technical-reference.md#connecting-an-mcp-client), [CSV imports](docs/technical-reference.md#sales-outbound-setup-after-deploy), [team access](docs/technical-reference.md#architecture), and [deployment](docs/technical-reference.md#deploy).
+Honk is self-hosted. Follow the [setup and technical reference](docs/technical-reference.md#local-dev) to run it locally, create your first organization, connect an agent, or deploy your own instance.
 
-The hosted instance at [outreach-crm.daniil-pokrovsky.workers.dev](https://outreach-crm.daniil-pokrovsky.workers.dev) requires an account or invitation.
+The reference also covers [agent connections](docs/technical-reference.md#connecting-an-mcp-client), [CSV imports](docs/technical-reference.md#sales-outbound-setup-after-deploy), [team access](docs/technical-reference.md#architecture), and [deployment](docs/technical-reference.md#deploy).
+
+Already have an invitation? Waddle over to the [hosted instance](https://outreach-crm.daniil-pokrovsky.workers.dev). An account or invitation is required. Being a goose is optional.
