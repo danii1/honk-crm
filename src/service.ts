@@ -50,8 +50,8 @@ const goalSettings = z.object({
 });
 const toDate = (v: string | undefined) => (v === undefined ? undefined : new Date(v));
 
-const CLEARABLE = ["x_handle", "linkedin_url", "reddit_user", "github", "threads_handle", "email", "profile_url", "website", "company_id"] as const;
-const CLEAR_FIELD = { x_handle: "xHandle", linkedin_url: "linkedin", reddit_user: "redditUser", github: "github", threads_handle: "threadsHandle", email: "email", profile_url: "profileUrl", website: "website", company_id: "companyId" } as const;
+const CLEARABLE = ["x_handle", "linkedin_url", "reddit_user", "github", "threads_handle", "email", "profile_url", "website", "company_id", "campaign_id", "name", "role", "source", "source_detail", "bio_summary", "notes", "followers", "est_team_size", "score", "signal_post_url", "signal_date", "signal_summary"] as const;
+const CLEAR_FIELD = { x_handle: "xHandle", linkedin_url: "linkedin", reddit_user: "redditUser", github: "github", threads_handle: "threadsHandle", email: "email", profile_url: "profileUrl", website: "website", company_id: "companyId", campaign_id: "campaignId", name: "name", role: "role", source: "source", source_detail: "sourceDetail", bio_summary: "bioSummary", notes: "notesText", followers: "followers", est_team_size: "estTeamSize", score: "score", signal_post_url: "signalPostUrl", signal_date: "signalDate", signal_summary: "signalSummary" } as const;
 
 export const schemas = {
   search_contacts: z.object({
@@ -102,7 +102,8 @@ export const schemas = {
     reason: reasonField,
   }),
   upsert_company: z.object({
-    domain: z.string(),
+    domain: z.string().optional(),
+    company_id: z.string().optional().describe("Update this exact company, including one without a domain"),
     name: z.string().optional(),
     website: z.string().optional(),
     linkedin: z.string().optional(),
@@ -110,6 +111,7 @@ export const schemas = {
     stack: z.array(z.string()).optional(),
     type: z.string().optional().describe("agency | startup | enterprise | ..."),
     published_email: z.string().optional(),
+    clear: z.array(z.enum(["website", "linkedin", "team_size", "stack", "type", "published_email"])).optional(),
     idempotency_key: idem,
     reason: reasonField,
   }),
@@ -549,18 +551,22 @@ export class CrmService {
   async upsert_company(raw: Input<"upsert_company">) {
     const i = await this.parse("upsert_company", raw);
     return this.idempotent("upsert_company", i, async () => {
-      const domain = normalizeDomain(i.domain);
-      if (!domain) throw new CrmError("invalid", `invalid domain ${i.domain}`);
-      const res = await this.ensureCompany(domain, i);
+      const pinned = i.company_id ? await this.repo.companyById(i.company_id) : undefined;
+      if (i.company_id && !pinned) throw new CrmError("not_found", `company ${i.company_id} not found`);
+      const domain = i.domain ? normalizeDomain(i.domain) : pinned?.domain;
+      if (!pinned && !domain) throw new CrmError("invalid", "a valid domain is required for a new company");
+      if (pinned && i.domain && domain !== pinned.domain) throw new CrmError("invalid", "company domain cannot be changed");
+      const res = await this.ensureCompany(domain ?? "", i, pinned);
       return { company: res.company, created: res.created, deduped: !res.created };
     });
   }
 
   private async ensureCompany(
     domain: string,
-    i: { name?: string; website?: string; linkedin?: string; team_size?: number; stack?: string[]; type?: string; published_email?: string; reason?: string },
+    i: { name?: string; website?: string; linkedin?: string; team_size?: number; stack?: string[]; type?: string; published_email?: string; clear?: ("website" | "linkedin" | "team_size" | "stack" | "type" | "published_email")[]; reason?: string },
+    pinned?: NonNullable<Awaited<ReturnType<Repository["companyById"]>>>,
   ) {
-    const existing = await this.repo.companyByDomain(domain);
+    const existing = pinned ?? await this.repo.companyByDomain(domain);
     const fields = {
       ...(i.name && { name: i.name }),
       ...(i.website && { website: i.website }),
@@ -569,6 +575,7 @@ export class CrmService {
       ...(i.stack && { stack: i.stack }),
       ...(i.type && { type: i.type.trim().toLowerCase() }),
       ...(i.published_email && { publishedEmail: normalizeEmail(i.published_email) }),
+      ...Object.fromEntries((i.clear ?? []).map((key) => [({ website: "website", linkedin: "linkedin", team_size: "teamSize", stack: "stack", type: "type", published_email: "publishedEmail" } as const)[key], null])),
     };
     if (existing) {
       if (Object.keys(fields).length === 0) return { company: existing, created: false };

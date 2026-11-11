@@ -1,14 +1,17 @@
 import { ArrowLeft, ArrowUpRight, CalendarDays, Check, CircleX, Clock, FileText, Mail, MessageSquare, Pencil, Send, Sparkles, Target, UserRound, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { getActivity, getContact, transitionDraft, updateStage, type Activity, type ContactDetail, type Draft, type Identity } from "@/client/lib/api";
+import { api, getActivity, getContact, transitionDraft, updateStage, type Activity, type ContactDetail, type Draft, type Identity } from "@/client/lib/api";
 import { STAGES } from "@/client/lib/constants";
-import { formatDate, formatDay, safeExternalUrl, titleCase } from "@/client/lib/utils";
+import { formatDate, formatDay, localDateTimeInput, safeExternalUrl, titleCase } from "@/client/lib/utils";
 import { useApp } from "@/client/App";
 import { ChannelIcon } from "@/client/components/channel-icon";
+import { ContactActions } from "@/client/components/contact-actions";
+import { ContactFormDialog } from "@/client/components/contact-form-dialog";
 import { EmptyState } from "@/client/components/empty-state";
 import { PageHeader } from "@/client/components/page-header";
 import { WebsiteLink } from "@/client/components/profile-links";
+import { RecordFormDialog } from "@/client/components/record-form-dialog";
 import { StageBadge } from "@/client/components/stage-badge";
 import { Badge } from "@/client/components/ui/badge";
 import { Button } from "@/client/components/ui/button";
@@ -116,6 +119,7 @@ export function ContactDetailPage() {
         actions={
           canWrite ? (
             <div className="flex flex-wrap items-center gap-2">
+              <ContactFormDialog contact={contact} trigger={<Button variant="outline" size="sm"><Pencil className="size-4" /> Edit profile</Button>} onSaved={() => { load(); refreshPipeline(); }} />
               <Select value={contact.stage} onChange={(e) => changeStage(e.target.value)} disabled={busy} className="w-44" aria-label="Change stage">
                 {STAGES.map((s) => <option key={s} value={s}>{titleCase(s)}</option>)}
               </Select>
@@ -132,6 +136,8 @@ export function ContactDetailPage() {
       />
 
       {notice ? <div className="mb-3 rounded-lg border bg-muted/40 px-3 py-2 text-xs">{notice}</div> : null}
+
+      {canWrite ? <ContactActions contact={contact} onSaved={() => { load(); refreshPipeline(); }} /> : null}
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="min-w-0 space-y-4">
@@ -178,7 +184,8 @@ export function ContactDetailPage() {
                       <TableHead>Stage</TableHead>
                       <TableHead>Last touch</TableHead>
                       <TableHead>Follow-up</TableHead>
-                      <TableHead>Next step</TableHead>
+                        <TableHead>Next step</TableHead>
+                        {canWrite ? <TableHead><span className="sr-only">Actions</span></TableHead> : null}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -189,6 +196,17 @@ export function ContactDetailPage() {
                         <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDay(s.lastTouchAt)}</TableCell>
                         <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDay(s.nextFollowupAt)}</TableCell>
                         <TableCell className="max-w-52 truncate text-xs text-muted-foreground">{s.nextStep ?? "—"}</TableCell>
+                        {canWrite ? <TableCell><RecordFormDialog
+                          trigger={<Button variant="ghost" size="sm">Edit</Button>}
+                          title={`Edit ${titleCase(s.channel)} follow-up`}
+                          fields={[
+                            { name: "stage", label: "Channel stage", type: "select", value: s.stage, options: STAGES.map((stage) => ({ value: stage, label: titleCase(stage) })) },
+                            { name: "next_followup_at", label: "Follow up", type: "datetime-local", value: localDateTimeInput(s.nextFollowupAt) },
+                            { name: "next_step", label: "Next step", value: s.nextStep, full: true },
+                          ]}
+                          onSave={(v) => api("set_channel_state", { contact_id: contact.id, channel: s.channel, stage: v.stage, next_followup_at: v.next_followup_at ? new Date(v.next_followup_at).toISOString() : null, next_step: v.next_step?.trim() || null })}
+                          onSaved={() => { load(); refreshPipeline(); }}
+                        /></TableCell> : null}
                       </TableRow>
                     ))}
                   </TableBody>
@@ -224,6 +242,11 @@ export function ContactDetailPage() {
                         <p className="mt-2 whitespace-pre-wrap text-xs text-muted-foreground">{d.text}</p>
                         {canWrite && (d.state === "drafted" || d.state === "approved") ? (
                           <div className="mt-2 flex flex-wrap gap-2">
+                            {d.state === "drafted" ? <RecordFormDialog
+                              trigger={<Button size="sm" variant="ghost"><Pencil className="size-3.5" /> Edit text</Button>}
+                              title="Edit draft" fields={[{ name: "text", label: "Message", type: "textarea", value: d.text, required: true, full: true }]}
+                              onSave={(v) => api("transition_draft", { draft_id: d.id, to: "drafted", text: (v.text ?? "").trim() })}
+                              onSaved={load} submitLabel="Save draft" /> : null}
                             {d.state === "drafted" ? <Button size="sm" variant="outline" disabled={busy} onClick={() => draftAction(d, "approved")}><Check className="size-3.5" /> Approve</Button> : null}
                             {d.state === "approved" ? <Button size="sm" disabled={busy} onClick={() => draftAction(d, "sent")}><Send className="size-3.5" /> Mark sent</Button> : null}
                             <Button size="sm" variant="ghost" disabled={busy} onClick={() => draftAction(d, "discarded")}><X className="size-3.5" /> Discard</Button>
@@ -310,6 +333,7 @@ export function ContactDetailPage() {
                     <li key={t.id} className="rounded-lg border p-2">
                       <p className="text-xs font-medium">{t.title}</p>
                       <p className="mt-0.5 text-[10px] text-muted-foreground">Due {formatDay(t.dueAt)}</p>
+                      {canWrite ? <Button size="sm" variant="ghost" className="mt-1" onClick={async () => { try { await api("complete_task", { id: t.id }); load(); } catch (cause) { setNotice((cause as Error).message); } }}><Check className="size-3.5" /> Complete</Button> : null}
                     </li>
                   ))}
                 </ul>

@@ -6,6 +6,7 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+const padDatePart = (part: number) => String(part).padStart(2, "0");
 
 export function formatDate(value?: string | Date | null, opts: Intl.DateTimeFormatOptions = { dateStyle: "medium", timeStyle: "short" }) {
   if (!value) return "—";
@@ -16,6 +17,13 @@ export function formatDate(value?: string | Date | null, opts: Intl.DateTimeForm
 
 export function formatDay(value?: string | Date | null) {
   return formatDate(value, { dateStyle: "medium" });
+}
+
+export function localDateTimeInput(value?: string | Date | null) {
+  if (!value) return "";
+  const d = typeof value === "string" ? new Date(value) : value;
+  if (Number.isNaN(d.getTime())) return "";
+  return `${d.getFullYear()}-${padDatePart(d.getMonth() + 1)}-${padDatePart(d.getDate())}T${padDatePart(d.getHours())}:${padDatePart(d.getMinutes())}`;
 }
 
 export function relativeTime(value?: string | Date | null) {

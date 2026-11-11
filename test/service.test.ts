@@ -39,6 +39,33 @@ describe("tenant isolation", () => {
 });
 
 describe("dedupe", () => {
+  it("lets a person clear optional profile fields while keeping the same record", async () => {
+    const { svc } = await makeOrg();
+    const created = await svc.upsert_contact({ name: "Avery", email: "avery@example.org", role: "Founder", notes: "Old note", score: 4, source_detail: "Event list", signal_summary: "Hiring", company_name: "Avery Studio" });
+    const updated = await svc.upsert_contact({ contact_id: created.contact.id, clear: ["role", "notes", "score", "email", "source_detail", "signal_summary", "company_id"] });
+    expect(updated.contact.id).toBe(created.contact.id);
+    expect(updated.contact.role).toBeNull();
+    expect(updated.contact.notesText).toBeNull();
+    expect(updated.contact.score).toBeNull();
+    expect(updated.contact.email).toBeNull();
+    expect(updated.contact.sourceDetail).toBeNull();
+    expect(updated.contact.signalSummary).toBeNull();
+    expect(updated.contact.companyId).toBeNull();
+  });
+
+  it("edits a name-only company by id and clears optional details", async () => {
+    const { svc } = await makeOrg();
+    const person = await svc.upsert_contact({ name: "Riley", company_name: "Willow Studio" });
+    const companyId = person.contact.companyId!;
+    const edited = await svc.upsert_company({ company_id: companyId, name: "Willow Creative", team_size: 12, website: "https://willow.example" });
+    expect(edited.company.id).toBe(companyId);
+    expect(edited.company.name).toBe("Willow Creative");
+    const cleared = await svc.upsert_company({ company_id: companyId, clear: ["team_size", "website"] });
+    expect(cleared.company.teamSize).toBeNull();
+    expect(cleared.company.website).toBeNull();
+    await expect(svc.upsert_company({ company_id: companyId, domain: "another.example" })).rejects.toMatchObject({ code: "invalid" });
+  });
+
   it("contacts by normalized email, companies by domain", async () => {
     const { svc } = await makeOrg();
     const first = await svc.upsert_contact({ email: "Jane.Doe@Stripe.com", name: "Jane" });

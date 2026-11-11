@@ -45,6 +45,7 @@ export interface Contact {
   github?: string | null;
   threadsHandle?: string | null;
   companyId?: string | null;
+  campaignId?: string | null;
   company?: Company | null;
   contactType: string;
   source?: string | null;
@@ -226,7 +227,7 @@ export const getContact = (id: string, includePrivate = false) => api<ContactDet
 export const getActivity = (entityId: string) => api<Activity[]>("get_activity", { entity_type: "contact", entity_id: entityId, limit: 100 });
 export const listCompanies = (query?: string, offset = 0) => api<{ companies: Company[]; total: number }>("list_companies", { query, limit: 500, offset });
 export const listCompetitors = () => api<Competitor[]>("list_competitors", {});
-export const listCampaigns = () => api<{ id: string; name: string; status: string }[]>("list_campaigns", {});
+export const listCampaigns = () => api<{ id: string; name: string; status: string; offerText?: string | null }[]>("list_campaigns", {});
 export const listChannels = () => api<{ channels: ChannelDef[]; extra_sources: string[] }>("list_channels", {});
 export const updateStage = (contactId: string, stage: string) => api<Contact>("update_stage", { contact_id: contactId, stage });
 export const transitionDraft = (draftId: string, to: string) => api<{ draft: Draft }>("transition_draft", { draft_id: draftId, to });

@@ -1,4 +1,4 @@
-import { Ban, Building, LayoutDashboard, Menu, Moon, SquareKanban, Sun, UserPlus, Users } from "lucide-react";
+import { Ban, Building, LayoutDashboard, Menu, Moon, Settings2, SquareKanban, Sun, UserPlus, Users } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink } from "react-router-dom";
 import { useApp } from "../App";
@@ -15,6 +15,7 @@ const NAV = [
   { to: "/pipeline", label: "Pipeline", icon: SquareKanban },
   { to: "/companies", label: "Companies", icon: Building },
   { to: "/competitors", label: "Competitors", icon: Ban },
+  { to: "/workspace", label: "Workspace", icon: Settings2 },
 ];
 
 function useTheme() {
@@ -117,7 +118,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold md:hidden">Honk</p>
             <p className="hidden text-xs text-muted-foreground md:block">
-              {me.role === "viewer" ? "Read-only access" : "You can edit leads, stages and drafts"}
+              {me.role === "viewer" ? "Read-only access" : "Keep your outreach records up to date"}
             </p>
           </div>
           <Button variant="ghost" size="icon" onClick={toggle} aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}>

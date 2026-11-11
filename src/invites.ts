@@ -1,6 +1,6 @@
 /**
  * Pluggable invitation delivery. The CRM never sends email itself: by default the sender just logs the
- * accept URL (dev). Swap in a real sender (Resend, SES, ...) with setInviteSender() at startup.
+ * invitation metadata. Swap in a real sender (Resend, SES, ...) with setInviteSender() at startup.
  */
 export interface InviteMessage {
   invitationId: string;
@@ -14,7 +14,7 @@ export interface InviteMessage {
 export type InviteSender = (msg: InviteMessage) => Promise<void> | void;
 
 const logSender: InviteSender = (m) => {
-  console.log(`[invite] ${m.email} -> ${m.organization.name} as ${m.role}: ${m.acceptUrl}`);
+  console.log(`[invite] ${m.email} -> ${m.organization.name} as ${m.role}`);
 };
 let sender: InviteSender = logSender;
 export const setInviteSender = (s: InviteSender | null) => {

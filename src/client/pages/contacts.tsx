@@ -1,11 +1,13 @@
 import { Columns3, RotateCcw, Search, SlidersHorizontal, Users, UserPlus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { listCampaigns, listChannels, listContactsView, type ChannelDef, type Contact, type ContactListResponse, type Lifecycle } from "@/client/lib/api";
 import { contactHref } from "@/client/lib/links";
 import { contactListFilters, paramsForView, stageForView, stagesForView, viewFromParams } from "@/client/lib/views";
 import { formatDay, titleCase } from "@/client/lib/utils";
 import { EmptyState } from "@/client/components/empty-state";
+import { ContactFormDialog } from "@/client/components/contact-form-dialog";
+import { ImportLeadsDialog } from "@/client/components/import-leads-dialog";
 import { PageHeader } from "@/client/components/page-header";
 import { ProfileLinks } from "@/client/components/profile-links";
 import { StageBadge } from "@/client/components/stage-badge";
@@ -18,6 +20,7 @@ import { Select } from "@/client/components/ui/select";
 import { Skeleton } from "@/client/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/client/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/client/components/ui/tabs";
+import { useApp } from "@/client/App";
 
 type ColumnKey = "stage" | "source" | "channels" | "company" | "lastTouch" | "score";
 const COLUMNS: { key: ColumnKey; label: string }[] = [
@@ -32,6 +35,8 @@ const DEFAULT_COLUMNS: ColumnKey[] = ["stage", "source", "channels", "company", 
 const PAGE_SIZE = 500;
 
 export function ContactsPage({ lifecycle }: { lifecycle: "lead" | "contact" }) {
+  const { canWrite, refreshPipeline } = useApp();
+  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const view = viewFromParams(lifecycle, params);
   const stage = stageForView(view, params.get("stage"));
@@ -44,6 +49,7 @@ export function ContactsPage({ lifecycle }: { lifecycle: "lead" | "contact" }) {
   const [search, setSearch] = useState(params.get("query") ?? "");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [revision, setRevision] = useState(0);
 
   useEffect(() => {
     listChannels().then((r) => setChannels(r.channels)).catch(() => undefined);
@@ -71,7 +77,7 @@ export function ContactsPage({ lifecycle }: { lifecycle: "lead" | "contact" }) {
     return () => {
       alive = false;
     };
-  }, [params, view, stage, offset]);
+  }, [params, view, stage, offset, revision]);
 
   const stageOptions = useMemo(() => stagesForView(view), [view]);
 
@@ -109,6 +115,12 @@ export function ContactsPage({ lifecycle }: { lifecycle: "lead" | "contact" }) {
         }
         actions={
           <>
+            {canWrite ? <ContactFormDialog
+              defaultStage={lifecycle === "contact" ? "responded" : "new"}
+              trigger={<Button size="sm"><UserPlus className="size-4" /> Add person</Button>}
+              onSaved={(person) => { refreshPipeline(); navigate(contactHref(person)); }}
+            /> : null}
+            {canWrite && lifecycle === "lead" ? <ImportLeadsDialog onImported={() => { refreshPipeline(); setRevision((n) => n + 1); }} /> : null}
             <Badge variant="muted" className="h-8 px-2.5 text-xs">
               {total} {view === "archived" ? "archived" : lifecycle === "lead" ? "leads" : "contacts"}
             </Badge>

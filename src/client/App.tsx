@@ -8,6 +8,7 @@ import { ContactDetailPage } from "./pages/contact-detail";
 import { PipelinePage } from "./pages/pipeline";
 import { CompaniesPage } from "./pages/companies";
 import { CompetitorsPage } from "./pages/competitors";
+import { WorkspacePage } from "./pages/workspace";
 import { NotFoundPage } from "./pages/not-found";
 
 interface AppContextValue {
@@ -76,6 +77,7 @@ export default function App() {
           <Route path="pipeline" element={<PipelinePage />} />
           <Route path="companies" element={<CompaniesPage />} />
           <Route path="competitors" element={<CompetitorsPage />} />
+          <Route path="workspace" element={<WorkspacePage />} />
           <Route path="leads/:id" element={<ContactDetailPage />} />
           <Route path="contacts/:id" element={<ContactDetailPage />} />
           <Route path="*" element={<NotFoundPage />} />

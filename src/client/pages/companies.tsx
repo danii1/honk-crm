@@ -1,9 +1,11 @@
-import { Building, CircleX, RotateCcw, Search } from "lucide-react";
+import { Building, CircleX, Pencil, Plus, RotateCcw, Search } from "lucide-react";
 import { useEffect, useState } from "react";
-import { listCompanies, type Company } from "@/client/lib/api";
+import { api, listCompanies, type Company } from "@/client/lib/api";
+import { useApp } from "@/client/App";
 import { EmptyState } from "@/client/components/empty-state";
 import { PageHeader } from "@/client/components/page-header";
 import { WebsiteLink } from "@/client/components/profile-links";
+import { RecordFormDialog, type FormField } from "@/client/components/record-form-dialog";
 import { Badge } from "@/client/components/ui/badge";
 import { Button } from "@/client/components/ui/button";
 import { Card } from "@/client/components/ui/card";
@@ -14,12 +16,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 const PAGE_SIZE = 500;
 
 export function CompaniesPage() {
+  const { canWrite } = useApp();
   const [companies, setCompanies] = useState<Company[] | null>(null);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
   const [query, setQuery] = useState("");
   const [applied, setApplied] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [revision, setRevision] = useState(0);
 
   useEffect(() => {
     let alive = true;
@@ -35,7 +39,7 @@ export function CompaniesPage() {
     return () => {
       alive = false;
     };
-  }, [applied, offset]);
+  }, [applied, offset, revision]);
 
   const start = companies?.length ? offset + 1 : 0;
   const end = offset + (companies?.length ?? 0);
@@ -44,7 +48,10 @@ export function CompaniesPage() {
 
   return (
     <>
-      <PageHeader title="Companies" description="Accounts linked to your leads and contacts." actions={<Badge variant="muted" className="h-8 px-2.5 text-xs">{total} companies</Badge>} />
+      <PageHeader title="Companies" description="Accounts linked to your leads and contacts." actions={<>
+        {canWrite ? <CompanyForm trigger={<Button size="sm"><Plus className="size-4" /> Add company</Button>} onSaved={() => setRevision((n) => n + 1)} /> : null}
+        <Badge variant="muted" className="h-8 px-2.5 text-xs">{total} companies</Badge>
+      </>} />
 
       <Card className="mb-4 p-3">
         <form
@@ -78,6 +85,7 @@ export function CompaniesPage() {
                 <TableHead>Leads</TableHead>
                 <TableHead>Relationships</TableHead>
                 <TableHead>Published email</TableHead>
+                {canWrite ? <TableHead><span className="sr-only">Actions</span></TableHead> : null}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -95,6 +103,7 @@ export function CompaniesPage() {
                   <TableCell className="max-w-48 truncate text-xs">
                     {c.publishedEmail ? <a className="text-primary hover:underline" href={`mailto:${c.publishedEmail}`}>{c.publishedEmail}</a> : <span className="text-muted-foreground">—</span>}
                   </TableCell>
+                  {canWrite ? <TableCell><CompanyForm company={c} trigger={<Button variant="ghost" size="sm"><Pencil className="size-3.5" /> Edit</Button>} onSaved={() => setRevision((n) => n + 1)} /></TableCell> : null}
                 </TableRow>
               ))}
             </TableBody>
@@ -114,4 +123,34 @@ export function CompaniesPage() {
       )}
     </>
   );
+}
+
+function CompanyForm({ company, trigger, onSaved }: { company?: Company; trigger: React.ReactNode; onSaved: () => void }) {
+  const fields: FormField[] = [
+    { name: "name", label: "Company name", value: company?.name, required: true },
+    ...(company && !company.domain ? [] : [{ name: "domain", label: "Domain", value: company?.domain, required: true, readOnly: !!company, placeholder: "example.com", help: company ? "The domain identifies this company and cannot be changed." : "Honk uses this to match people to the company." }]),
+    { name: "website", label: "Website", value: company?.website, placeholder: "https://example.com" },
+    { name: "linkedin", label: "LinkedIn", value: company?.linkedin, placeholder: "linkedin.com/company/example" },
+    { name: "type", label: "Type", value: company?.type, placeholder: "startup, agency, enterprise…" },
+    { name: "team_size", label: "Team size", type: "number", min: 0, value: company?.teamSize },
+    { name: "stack", label: "Stack", value: company?.stack?.join(", "), full: true, placeholder: "React, Postgres, Cloudflare", help: "Comma-separated." },
+    { name: "published_email", label: "Published email", type: "email", value: company?.publishedEmail, full: true },
+  ];
+  return <RecordFormDialog trigger={trigger} title={company ? "Edit company" : "Add company"} description="Keep the account details your team uses for outreach."
+    fields={fields} submitLabel={company ? "Save changes" : "Add company"} onSaved={onSaved}
+    onSave={(values) => {
+      const clear = company ? (["website", "linkedin", "type", "team_size", "stack", "published_email"] as const).filter((key) => {
+        const old = key === "team_size" ? company.teamSize : key === "published_email" ? company.publishedEmail : company[key];
+        return old !== undefined && old !== null && (Array.isArray(old) ? old.length > 0 : old !== "") && !values[key]?.trim();
+      }) : [];
+      const body: Record<string, unknown> = {
+        ...(company ? { company_id: company.id } : { domain: (values.domain ?? "").trim() }),
+        name: (values.name ?? "").trim(),
+        ...(clear.length ? { clear } : {}),
+      };
+      for (const key of ["website", "linkedin", "type", "published_email"]) if (values[key]?.trim()) body[key] = values[key].trim();
+      if (values.team_size) body.team_size = Number(values.team_size);
+      if (values.stack?.trim()) body.stack = values.stack.split(",").map((part) => part.trim()).filter(Boolean);
+      return api("upsert_company", body);
+    }} />;
 }

@@ -53,7 +53,7 @@ request ─► Hono (src/index.ts)
 * **Seats:** seats = human members (API keys/bots never count). `organization.seat_limit` (null = unlimited) is
   enforced on `accept_invite` and in Better Auth's `beforeAddMember` hook. `get_org_usage` reports seats, keys, contacts.
 * **Invitations:** `invite_member` returns `accept_url` = `/accept-invite?token=<invitation id>` and never emails.
-  Delivery goes through `setInviteSender()` (`src/invites.ts`; default logs the URL). The invitee signs in and
+  Delivery goes through `setInviteSender()` (`src/invites.ts`; default logs invitation metadata). The invitee signs in and
   accepts on that page (→ `POST /invites/accept`, session or OAuth bearer) or calls `accept_invite` over MCP/REST.
   The invitee's email must match. Invites expire after 7 days; re-inviting cancels the old one.
 * **Multiple orgs:** a user can belong to many orgs. Org = `x-org-id` header, else the session's active org, else the
@@ -88,18 +88,26 @@ API (`/v1/<tool>`, `/v1/overview`) and never touches D1 directly.
 | Page | What it shows |
 |---|---|
 | Overview | Today's follow-ups and tasks, new replies, LinkedIn connections awaiting a first message, pending drafts, X pacing, stale contacts, goal progress and stage counts |
-| Leads | People still prospecting (`new … connected`), with search, stage/channel/source/campaign filters and a column chooser |
-| Contacts | Relationship stages (`responded … paying`) plus a Lost / DNC tab |
+| Leads | People still prospecting (`new … connected`), with search, stage/channel/source/campaign filters, a column chooser, Add person, and CSV import with a dry-run preview |
+| Contacts | Relationship stages (`responded … paying`) plus a Lost / DNC tab and Add person |
 | Pipeline | Kanban board by stage, with links into every lead/contact |
-| Lead / contact detail | Activity timeline, per-channel state, drafts and their states, properties sidebar, linked profiles |
-| Companies | Accounts with domain links and lead/relationship counts |
-| Competitors | Read-only competitor blocklist |
+| Lead / contact detail | Edit profile; add notes and tasks; log touches and replies; create/edit/transition drafts; edit per-channel stage and follow-up; complete tasks; activity timeline and linked profiles |
+| Companies | Add/edit accounts with domain links and lead/relationship counts |
+| Competitors | Admin add/edit/remove blocklist entries |
+| Workspace | Admin campaign, custom channel, and follow-up rule forms |
 
 Lead vs contact is derived from the stage (no duplicate lifecycle column): `lead` = new, qualified, drafted,
 contacted, connection_pending, connected; `contact` = responded, call_booked, pilot, paying; `archived` =
 lost, do_not_contact. `list_contacts` accepts an optional `lifecycle` filter and `list_contacts_view` returns
 the split counts plus linked identities. The UI is read-only for viewers; stage changes and draft transitions
-are only shown when the session role has `crm:write`.
+and forms are only shown when the session role has `crm:write`; admin forms require an admin role.
+
+Human forms call the same REST tools as MCP agents: `upsert_contact`, `upsert_company`, `add_note`,
+`create_task`, `complete_task`, `log_touch`, `record_event`, `set_channel_state`, `update_stage`,
+`create_draft`, `transition_draft`, `upsert_campaign`, `add_custom_channel`, `set_followup_rules`,
+`add_competitor`, `update_competitor`, `remove_competitor`, `set_goals`, and `import_leads_csv`.
+Integration and bulk operations such as `sync_sent`, `mark_draft_sent`, `bulk_update_stage`, and
+`purge_competitors` remain available through MCP/REST.
 
 Every identity in the UI is an outbound link built from the channel registry (`src/channels.ts`): X, LinkedIn,
 Reddit, GitHub, Threads, email (`mailto:`), Hacker News, Bluesky, Telegram, YouTube and custom channels.
