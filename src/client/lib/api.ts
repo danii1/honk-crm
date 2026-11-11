@@ -218,6 +218,15 @@ export function api<T>(tool: string, body: Record<string, unknown> = {}) {
 }
 
 export const getMe = () => request<Me>("/v1/me");
+export const getSession = () => request<{ user: { id: string; name: string; email: string } } | null>("/api/auth/get-session");
+export const updateAccountName = (name: string) => request<{ status: boolean }>("/api/auth/update-user", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) });
+export const changeAccountPassword = (currentPassword: string, newPassword: string) => request<unknown>("/api/auth/change-password", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ currentPassword, newPassword }) });
+export const updateOrganizationName = (organizationId: string, name: string) => request<{ id: string; name: string }>("/api/auth/organization/update", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ organizationId, data: { name } }) });
+export async function signOut() {
+  const res = await fetch("/api/auth/sign-out", { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: "{}" });
+  if (!res.ok) throw new Error("Could not sign out. Please try again.");
+  window.location.assign("/sign-in");
+}
 export const getOverview = (tz: string) => request<Overview>(`/v1/overview?tz=${encodeURIComponent(tz)}`);
 export const getGoals = () => api<{ targets: { stage: string; count: number }[]; deadline?: string }>("get_goals");
 export const setGoals = (goals: { targets: { stage: string; count: number }[]; deadline?: string }) => api<typeof goals>("set_goals", goals);

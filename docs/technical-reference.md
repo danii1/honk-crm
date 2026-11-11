@@ -95,6 +95,7 @@ API (`/v1/<tool>`, `/v1/overview`) and never touches D1 directly.
 | Companies | Add/edit accounts with domain links and lead/relationship counts |
 | Competitors | Admin add/edit/remove blocklist entries |
 | Workspace | Admin campaign, custom channel, and follow-up rule forms |
+| Settings | Account name/password and sign-out, organization name/switching/seat limit, people and invitations, agent API keys, and copyable MCP connection instructions |
 
 Lead vs contact is derived from the stage (no duplicate lifecycle column): `lead` = new, qualified, drafted,
 contacted, connection_pending, connected; `contact` = responded, call_booked, pilot, paying; `archived` =

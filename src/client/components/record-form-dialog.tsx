@@ -9,7 +9,7 @@ import { cn } from "@/client/lib/utils";
 export type FormField = {
   name: string;
   label: string;
-  type?: "text" | "email" | "url" | "number" | "date" | "datetime-local" | "textarea" | "select";
+  type?: "text" | "email" | "password" | "url" | "number" | "date" | "datetime-local" | "textarea" | "select";
   value?: string | number | null;
   placeholder?: string;
   help?: string;
@@ -86,7 +86,7 @@ export function RecordFormDialog({ trigger, title, description, fields, submitLa
                       {field.options?.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                     </Select>
                   ) : (
-                    <Input name={field.name} type={field.type ?? "text"} defaultValue={field.value ?? ""} required={field.required} readOnly={field.readOnly} placeholder={field.placeholder} min={field.min} max={field.max} />
+                    <Input name={field.name} type={field.type ?? "text"} defaultValue={field.value ?? ""} required={field.required} readOnly={field.readOnly} placeholder={field.placeholder} min={field.min} max={field.max} autoComplete={field.type === "password" ? field.name.includes("current") ? "current-password" : "new-password" : undefined} />
                   )}
                   {field.help ? <span className="mt-1 block text-xs text-muted-foreground">{field.help}</span> : null}
                 </label>
