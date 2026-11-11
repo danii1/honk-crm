@@ -1,4 +1,4 @@
-import { Ban, Building, LayoutDashboard, Menu, Moon, Settings2, SquareKanban, Sun, UserPlus, Users } from "lucide-react";
+import { Ban, Building, LayoutDashboard, LogOut, Menu, Moon, Settings2, Settings, SquareKanban, Sun, UserPlus, Users } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink } from "react-router-dom";
 import { useApp } from "../App";
@@ -7,6 +7,7 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "./ui/dialog";
 import { TZ } from "../lib/utils";
+import { signOut } from "../lib/api";
 
 const NAV = [
   { to: "/", label: "Overview", icon: LayoutDashboard, end: true },
@@ -16,6 +17,7 @@ const NAV = [
   { to: "/companies", label: "Companies", icon: Building },
   { to: "/competitors", label: "Competitors", icon: Ban },
   { to: "/workspace", label: "Workspace", icon: Settings2 },
+  { to: "/settings", label: "Settings", icon: Settings },
 ];
 
 function useTheme() {
@@ -81,6 +83,14 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { me } = useApp();
   const { dark, toggle } = useTheme();
   const [open, setOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
+  const leave = async () => {
+    setSigningOut(true);
+    setSignOutError(null);
+    try { await signOut(); }
+    catch (cause) { setSignOutError(cause instanceof Error ? cause.message : "Could not sign out."); setSigningOut(false); }
+  };
 
   return (
     <div className="min-h-screen md:flex">
@@ -96,6 +106,8 @@ export function AppShell({ children }: { children: ReactNode }) {
             <Badge variant={me.role === "viewer" ? "muted" : "default"}>{me.role}</Badge>
             <span className="text-[10px] text-muted-foreground">{TZ}</span>
           </div>
+          <Button variant="ghost" size="sm" className="mt-2 w-full justify-start px-2" disabled={signingOut} onClick={leave}><LogOut className="size-3.5" /> Sign out</Button>
+          {signOutError ? <p role="alert" className="mt-1 text-xs text-destructive">{signOutError}</p> : null}
         </div>
       </aside>
 
@@ -113,6 +125,8 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <Brand />
               </div>
               <NavItems onNavigate={() => setOpen(false)} />
+              <Button variant="outline" className="mt-6 w-full justify-start" disabled={signingOut} onClick={leave}><LogOut className="size-4" /> Sign out</Button>
+              {signOutError ? <p role="alert" className="mt-2 text-xs text-destructive">{signOutError}</p> : null}
             </DialogContent>
           </Dialog>
           <div className="min-w-0 flex-1">
