@@ -51,3 +51,9 @@ Honk is self-hosted. Follow the [setup and technical reference](docs/technical-r
 The reference also covers [agent connections](docs/technical-reference.md#connecting-an-mcp-client), [CSV imports](docs/technical-reference.md#sales-outbound-setup-after-deploy), [team access](docs/technical-reference.md#architecture), and [deployment](docs/technical-reference.md#deploy).
 
 Already have an invitation? Waddle over to the [hosted instance](https://outreach-crm.daniil-pokrovsky.workers.dev). An account or invitation is required. Being a goose is optional.
+
+## License
+
+Copyright (C) 2026 Daniil Pokrovsky
+
+Honk is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0). See [LICENSE](LICENSE).
